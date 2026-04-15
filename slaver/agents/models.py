@@ -22,7 +22,7 @@ import uuid
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional
-
+from httpx_socks import SyncProxyTransport
 logger = logging.getLogger(__name__)
 
 
@@ -296,7 +296,6 @@ class OpenAIServerModel(Model):
 
     def create_client(self):
         import openai
-
         return openai.OpenAI(**self.client_kwargs)
 
     def __call__(

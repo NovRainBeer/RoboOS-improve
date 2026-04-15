@@ -19,7 +19,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 from tools.utils import Config
-from tools.tool_matcher import ToolMatcher
+from slaver.tools.tool_matcher import ToolMatcher
 
 config = Config.load_config()
 collaborator = Collaborator.from_config(config=config["collaborator"])

@@ -77,7 +77,7 @@ def publish_task():
         JSON response with status or error message
     """
     if request.method == "GET":
-        return jsonify({"statis": "success"}), 200
+        return jsonify({"status": "success"}), 200
     try:
         data = request.get_json()
         if not data or "task" not in data:

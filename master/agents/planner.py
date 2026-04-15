@@ -60,7 +60,7 @@ class GlobalTaskPlanner:
         :param description: A brief title or description for the message.
         """
         if self.profiling:
-            module_name = "master"  # Name of the current module
+            module_name = "master"
             print(f" [{module_name}] {description}:")
             print(message)
 
@@ -72,7 +72,10 @@ class GlobalTaskPlanner:
         all_environments_info = self.collaborator.read_environment(name=None)
 
         content = MASTER_PLANNING_PLANNING.format(
-            robot_name_list=all_robots_name, robot_tools_info=all_robots_info, task=task, scene_info=all_environments_info
+            robot_name_list=all_robots_name,
+            robot_tools_info=all_robots_info,
+            task=task,
+            scene_info=all_environments_info,
         )
 
         messages = [
@@ -89,14 +92,21 @@ class GlobalTaskPlanner:
         from datetime import datetime
 
         start_inference = datetime.now()
-        response = self.global_model.chat.completions.create(
-            model=self.model_name,
-            messages=messages,
-            temperature=0.2,
-            top_p=0.9,
-            max_tokens=2048,
-            seed=42,
-        )
+
+        try:
+            response = self.global_model.chat.completions.create(
+                model=self.model_name,
+                messages=messages,
+                temperature=0,
+                top_p=1.0,
+                max_tokens=256,
+                seed=42,
+            )
+        except Exception as e:
+            print(" [master] planner exception:")
+            print(repr(e))
+            raise
+
         end_inference = datetime.now()
 
         self.display_profiling_info(

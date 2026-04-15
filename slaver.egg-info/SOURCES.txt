@@ -1,0 +1,9 @@
+LICENSE
+README.md
+setup.py
+slaver/run.py
+slaver.egg-info/PKG-INFO
+slaver.egg-info/SOURCES.txt
+slaver.egg-info/dependency_links.txt
+slaver.egg-info/top_level.txt
+test/test.py

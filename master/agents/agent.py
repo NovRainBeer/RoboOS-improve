@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import threading
 import uuid
 from collections import defaultdict
@@ -33,7 +34,6 @@ class GlobalAgent:
         os.makedirs(os.path.dirname(logger_file), exist_ok=True)
         file_handler = logging.FileHandler(logger_file)
 
-        # Set the logging level
         if logger_config["master_logger_level"] == "DEBUG":
             self.logger.setLevel(logging.DEBUG)
             file_handler.setLevel(logging.DEBUG)
@@ -80,7 +80,6 @@ class GlobalAgent:
             f"AGENT_REGISTRATION: {robot_name} \n {json.dumps(robot_info)}"
         )
 
-        # Register functions for processing robot execution results in the brain
         channel_r2b = f"{robot_name}_to_RoboOS"
         threading.Thread(
             target=lambda: self.collaborator.listen(channel_r2b, self._handle_result),
@@ -95,12 +94,10 @@ class GlobalAgent:
     def _handle_result(self, data: str):
         data = json.loads(data)
 
-        """Handle results from agents."""
         robot_name = data.get("robot_name")
         subtask_handle = data.get("subtask_handle")
         subtask_result = data.get("subtask_result")
 
-        # TODO: Task result should be refered to the next step determination.
         if robot_name and subtask_handle and subtask_result:
             self.logger.info(
                 f"================ Received result from {robot_name} ================"
@@ -122,23 +119,54 @@ class GlobalAgent:
             )
 
     def _extract_json(self, input_string):
-        """Extract JSON from a string."""
-        start_marker = "```json"
-        end_marker = "```"
-        try:
-            start_idx = input_string.find(start_marker)
-            end_idx = input_string.find(end_marker, start_idx + len(start_marker))
-            if start_idx == -1 or end_idx == -1:
-                self.logger.warning("[WARNING] JSON markers not found in the string.")
-                return None
-            json_str = input_string[start_idx + len(start_marker) : end_idx].strip()
-            json_data = json.loads(json_str)
-            return json_data
-        except json.JSONDecodeError as e:
-            self.logger.warning(
-                f"[WARNING] JSON cannot be extracted from the string.\n{e}"
-            )
+        """Extract JSON from model output. Supports fenced JSON and raw JSON."""
+        if not input_string:
+            self.logger.warning("[WARNING] Empty model output.")
             return None
+
+        text = input_string.strip()
+
+        # 1) fenced JSON: ```json ... ```
+        m = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
+        if m:
+            candidate = m.group(1).strip()
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError as e:
+                self.logger.warning(f"[WARNING] Failed to parse fenced json:\n{e}")
+
+        # 2) generic fenced block: ``` ... ```
+        m = re.search(r"```\s*(.*?)\s*```", text, re.DOTALL)
+        if m:
+            candidate = m.group(1).strip()
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError as e:
+                self.logger.warning(
+                    f"[WARNING] Failed to parse generic fenced block:\n{e}"
+                )
+
+        # 3) raw JSON
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # 4) fallback: extract outermost {...}
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            candidate = m.group(0).strip()
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError as e:
+                self.logger.warning(
+                    f"[WARNING] Failed to parse extracted braces JSON:\n{e}"
+                )
+
+        self.logger.warning(
+            f"[WARNING] Could not extract valid JSON from model output:\n{text}"
+        )
+        return None
 
     def _group_tasks_by_order(self, tasks):
         """Group tasks by topological order."""
@@ -156,32 +184,69 @@ class GlobalAgent:
             daemon=True,
         ).start()
         self.logger.info("Started listening for robot registrations...")
+        
+    def _direct_move_plan(self, task):
+        if isinstance(task, list):
+            task_text = " ".join(str(x) for x in task)
+        else:
+            task_text = str(task)
+
+        text = task_text.strip()
+
+        direction = None
+        if "前进" in text:
+            direction = "forward"
+        elif "后退" in text:
+            direction = "backward"
+
+        if direction is None:
+            return None
+
+        duration_match = re.search(r"(\d+(?:\.\d+)?)\s*秒", text)
+        duration = float(duration_match.group(1)) if duration_match else 1.0
+
+        speed_match = re.search(r"速度\s*(\d+(?:\.\d+)?)", text)
+        if not speed_match:
+            speed_match = re.search(r"(\d+(?:\.\d+)?)\s*米每秒", text)
+        speed = float(speed_match.group(1)) if speed_match else 0.1
+
+        duration = max(0.1, min(duration, 10.0))
+        speed = max(0.02, min(speed, 0.30))
+
+        robots = self.collaborator.read_all_agents_name()
+        if not robots:
+            self.logger.error("[ERROR] No robot registered for direct move fallback.")
+            return None
+
+        robot_name = robots[0]
+
+        return {
+            "reasoning_explanation": (
+                f"Direct fallback planner used for a simple mobile base movement task: "
+                f"{direction}, {duration}s, {speed}m/s."
+            ),
+            "subtask_list": [
+                {
+                    "robot_name": robot_name,
+                    "subtask": (
+                        f"move_linear(direction='{direction}', "
+                        f"duration={duration}, speed={speed})"
+                    ),
+                    "subtask_order": 1,
+                }
+            ],
+        }
 
     def reasoning_and_subtasks_is_right(self, reasoning_and_subtasks: dict) -> bool:
         """
-        Verify if all robots mentioned in the task decomposition exist in the system registry
-
-        Args:
-            reasoning_and_subtasks: Task decomposition dictionary with format:
-                {
-                    "reasoning_explanation": "...",
-                    "subtask_list": [
-                        {"robot_name": "xxx", ...},
-                        {"robot_name": "xxx", ...}
-                    ]
-                }
-
-        Returns:
-            bool: True if all robots are registered, False if any invalid robots found
+        Verify if all robots mentioned in the task decomposition exist in the system registry.
         """
-        # Check if input has correct structure
         if not isinstance(reasoning_and_subtasks, dict):
             return False
 
         if "subtask_list" not in reasoning_and_subtasks:
             return False
 
-        # Extract all unique robot names from subtask_list
         try:
             worker_list = {
                 subtask["robot_name"]
@@ -189,39 +254,49 @@ class GlobalAgent:
                 if isinstance(subtask, dict) and "robot_name" in subtask
             }
 
-            # Read list of all registered robots from the collaborator
             robots_list = set(self.collaborator.read_all_agents_name())
-
-            # Check if all workers are registered
             return worker_list.issubset(robots_list)
 
         except (TypeError, KeyError):
             return False
 
     def publish_global_task(self, task: str, refresh: bool, task_id: str) -> Dict:
-        """Publish a global task to all Agents"""
         self.logger.info(f"Publishing global task: {task}")
 
-        response = self.planner.forward(task)
-        reasoning_and_subtasks = self._extract_json(response)
+        # 先尝试规则直通：简单前进/后退任务不走 LLM
+        reasoning_and_subtasks = self._direct_move_plan(task)
 
-        # Retry if JSON extraction fails
+        if reasoning_and_subtasks is None:
+            response = self.planner.forward(task)
+            reasoning_and_subtasks = self._extract_json(response)
+        else:
+            response = None
+
         attempt = 0
         while (not self.reasoning_and_subtasks_is_right(reasoning_and_subtasks)) and (
             attempt < self.config["model"]["model_retry_planning"]
         ):
             self.logger.warning(
-                f"[WARNING] JSON extraction failed after {self.config['model']['model_retry_planning']} attempts."
+                f"Attempt {attempt + 1} failed. Retrying task decomposition..."
             )
-            self.logger.error(
-                f"[ERROR] Task ({task}) failed to be decomposed into subtasks, it will be ignored."
-            )
-            self.logger.warning(
-                f"Attempt {attempt + 1} to extract JSON failed. Retrying..."
-            )
+            if response is not None:
+                self.logger.warning(f"Raw planner response:\n{response}")
             response = self.planner.forward(task)
             reasoning_and_subtasks = self._extract_json(response)
             attempt += 1
+
+        if reasoning_and_subtasks is None:
+            self.logger.error(
+                f"[ERROR] Planner returned invalid JSON.\nRaw response:\n{response}"
+            )
+            raise ValueError("Planner returned invalid JSON")
+
+        if not self.reasoning_and_subtasks_is_right(reasoning_and_subtasks):
+            self.logger.error(
+                "[ERROR] Planner returned unusable subtasks.\n"
+                f"Parsed response:\n{reasoning_and_subtasks}"
+            )
+            raise ValueError("Planner returned unusable subtasks")
 
         self.logger.info(f"Received reasoning and subtasks:\n{reasoning_and_subtasks}")
         subtask_list = reasoning_and_subtasks.get("subtask_list", [])

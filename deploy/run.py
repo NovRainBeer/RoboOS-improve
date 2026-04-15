@@ -242,14 +242,16 @@ def start_inference():
                     "success": False,
                     "message": "Missing required fields: 'conda_env' and/or 'startup_command'",
                 }
-            ),
+            ),   
             400,
         )
 
     try:
-        log_file = "vllm.log"
+        log_file = "vllm.log"    
 
-        bash_command = f"source ~/miniconda3/etc/profile.d/conda.sh && conda activate {conda_env} && {startup_command}"
+        # bash_command = f"source ~/miniconda3/etc/profile.d/conda.sh && conda activate {conda_env} && {startup_command}"
+        bash_command = f"source /home/rosos/下载/anaconda3/etc/profile.d/conda.sh && conda activate {conda_env} && {startup_command}"
+
 
         with open(log_file, "w") as f:
             subprocess.Popen(
@@ -285,9 +287,22 @@ def start_master():
     pwd = master_path.parent
 
     try:
+        # bash_command = """
+        #     if [ -f ~/miniconda3/etc/profile.d/conda.sh ]; then
+        #         source ~/miniconda3/etc/profile.d/conda.sh
+        #     elif [ -f ~/anaconda3/etc/profile.d/conda.sh ]; then
+        #         source ~/anaconda3/etc/profile.d/conda.sh
+        #     else
+        #         echo "conda.sh not found!" >&2
+        #         exit 1
+        #     fi
+        #     conda activate {env} && python run.py
+        #     """.format(
+        #     env=conda_env
+        # ).strip()
         bash_command = """
-            if [ -f ~/miniconda3/etc/profile.d/conda.sh ]; then
-                source ~/miniconda3/etc/profile.d/conda.sh
+            if [ -f /home/rosos/下载/anaconda3/etc/profile.d/conda.sh ]; then
+                source /home/rosos/下载/anaconda3/etc/profile.d/conda.sh
             elif [ -f ~/anaconda3/etc/profile.d/conda.sh ]; then
                 source ~/anaconda3/etc/profile.d/conda.sh
             else
@@ -298,6 +313,7 @@ def start_master():
             """.format(
             env=conda_env
         ).strip()
+
 
         with open("master.log", "w") as log:
             subprocess.Popen(
@@ -339,8 +355,8 @@ def start_slaver():
 
     try:
         bash_command = """
-            if [ -f ~/miniconda3/etc/profile.d/conda.sh ]; then
-                source ~/miniconda3/etc/profile.d/conda.sh
+            if [ -f /home/rosos/下载/anaconda3/etc/profile.d/conda.sh ]; then
+                source /home/rosos/下载/anaconda3/etc/profile.d/conda.sh
             elif [ -f ~/anaconda3/etc/profile.d/conda.sh ]; then
                 source ~/anaconda3/etc/profile.d/conda.sh
             else

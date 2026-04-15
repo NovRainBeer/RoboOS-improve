@@ -28,21 +28,15 @@ tts:
 
 # Cloud Server Infos
 model:
-  # Model name for the cloud server
-  model_select: "/workspace/model/BAAI/RoboBrain2.0-7B"
-  # Number of retries for planning
+  model_select: "RoboBrain2.5-8B-NV"
   model_retry_planning: 5
   model_dict:
-    # Model name for the cloud server
-    cloud_model: "/workspace/model/BAAI/RoboBrain2.0-7B"
-    # Deploy for the cloud server
+    cloud_model: "RoboBrain2.5-8B-NV"
     cloud_type: "default"
-    # API key for the cloud server
     cloud_api_key: "EMPTY"
-    # URL of the cloud server
-    cloud_server: "http://localhost:4567/v1/"
-    # Maximum number of chat messages to keep in memory
+    cloud_server: "http://127.0.0.1:4567/v1"
     max_chat_message: 50
+
 
 # Collaborator Parameters
 collaborator:
@@ -55,7 +49,7 @@ collaborator:
   # Whether clear the database on startup
   clear: true
   # Password for server
-  password: ""
+  password: 0
 
 # Logging Parameters
 logger:
