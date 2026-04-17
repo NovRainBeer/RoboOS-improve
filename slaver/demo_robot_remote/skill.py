@@ -1,0 +1,72 @@
+from mcp.server.fastmcp import FastMCP
+import subprocess
+import time
+mcp = FastMCP(name="robots", stateless_http=True, host="0.0.0.0", port=8000)
+TOPIC_NAME = "/cmd_vel"
+ROS_SETUP = "source /opt/ros/humble/setup.bash"
+# 如果你的底盘驱动还依赖自己的 ROS2 工作空间，把上面改成：
+# ROS_SETUP = "source /opt/ros/humble/setup.bash && source /home/rosos/你的工作空间/install/setup.bash"
+@mcp.tool()
+async def move_linear(direction: str, duration: float, speed: float) -> tuple[str, dict]:
+    """
+    Move the mobile base forward or backward for a short duration.
+    Args:
+        direction: "forward" or "backward"
+        duration: moving time in seconds
+        speed: linear speed in m/s
+    """
+    direction = direction.lower().strip()
+    if direction not in ["forward", "backward"]:
+        raise ValueError("direction must be 'forward' or 'backward'")
+    duration = max(0.1, min(float(duration), 5.0))
+    speed = max(0.02, min(abs(float(speed)), 0.30))
+    vx = speed if direction == "forward" else -speed
+    move_cmd = f'''
+{ROS_SETUP} && \
+ros2 topic pub -r 10 {TOPIC_NAME} geometry_msgs/msg/Twist \
+"{{linear: {{x: {vx}, y: 0.0, z: 0.0}}, angular: {{x: 0.0, y: 0.0, z: 0.0}}}}"
+'''
+    stop_cmd = f'''
+{ROS_SETUP} && \
+ros2 topic pub --once {TOPIC_NAME} geometry_msgs/msg/Twist \
+"{{linear: {{x: 0.0, y: 0.0, z: 0.0}}, angular: {{x: 0.0, y: 0.0, z: 0.0}}}}"
+'''
+    pub_proc = None
+    try:
+        pub_proc = subprocess.Popen(
+            ["bash", "-lc", move_cmd],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(duration)
+        subprocess.run(
+            ["bash", "-lc", stop_cmd],
+            check=True,
+        )
+        result = f"Move {direction} success, duration={duration}, speed={speed}"
+        print(result)
+        return result, {"position": None, "holding": None, "status": "idle"}
+    finally:
+        if pub_proc is not None:
+            pub_proc.terminate()
+            try:
+                pub_proc.wait(timeout=2)
+            except Exception:
+                pub_proc.kill()
+@mcp.tool()
+async def navigate_to_target(target: str) -> tuple[str, dict]:
+    result = f"Navigation to {target} has been successfully performed."
+    print(result)
+    return result, {"position": f"{target}"}
+@mcp.tool()
+async def grasp_object(object: str) -> tuple[str, dict]:
+    result = f"{object} has been successfully grasped."
+    print(result)
+    return result, {"grasped": f"{object}"}
+@mcp.tool()
+async def place_to_affordance(affordance: str, object: str = None) -> tuple[str, dict]:
+    result = f"{object} has been successfully placed on {affordance}."
+    print(result)
+    return result, {"grasped": "None"}
+if __name__ == "__main__":
+    mcp.run(transport="streamable-http")

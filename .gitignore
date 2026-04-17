@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Envs
+venv/
+.env
+.conda/
+*.env
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# ROS / build
+build/
+install/
+log/
+
+# Model / cache
+models/
+checkpoints/
+*.pt
+*.pth
+*.bin
+*.safetensors
+.huggingface/
+cache/
