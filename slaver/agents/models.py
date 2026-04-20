@@ -207,29 +207,78 @@ class ToolCall:
 
 
 def convert_chat_message(original_message):
+    # 1. 优先处理模型已经返回的 tool_calls
+    if getattr(original_message, "tool_calls", None):
+        tool_calls = []
+        for tc in original_message.tool_calls:
+            tool_calls.append(
+                ToolCall(
+                    id=tc.id if getattr(tc, "id", None) else f"call_{uuid.uuid4().hex}",
+                    type="function",
+                    function=FunctionCall(
+                        name=tc.function.name,
+                        arguments=tc.function.arguments,
+                        description=None,
+                    ),
+                )
+            )
+
+        return ChatMessage(
+            role="assistant",
+            content=None,
+            tool_calls=tool_calls,
+            raw=None,
+        )
+
+    # 2. 再兼容普通文本 content
     content = original_message.content
 
-    json_match = re.search(r"```json\n(.*?)\n```", content, flags=re.DOTALL)
+    if content is None:
+        content = ""
+    elif isinstance(content, list):
+        text_parts = []
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") == "text" and "text" in item:
+                    text_parts.append(str(item["text"]))
+                else:
+                    text_parts.append(str(item))
+            else:
+                text_parts.append(str(item))
+        content = "\n".join(text_parts)
+    elif isinstance(content, dict):
+        if "text" in content:
+            content = str(content["text"])
+        else:
+            content = str(content)
+    elif not isinstance(content, str):
+        content = str(content)
+
+    # 3. 兼容老格式：content 里是 ```json ... ```
+    json_match = re.search(r"```json\s*(.*?)\s*```", content, flags=re.DOTALL)
     if json_match:
         json_str = json_match.group(1).strip()
-        parsed_data = json.loads(json_str)
-        if isinstance(parsed_data, dict) and "name" in parsed_data:
-            return ChatMessage(
-                role="assistant",
-                content=None,
-                tool_calls=[
-                    ToolCall(
-                        id=f"call_{uuid.uuid4().hex}",
-                        type="function",
-                        function=FunctionCall(
-                            name=parsed_data["name"],
-                            arguments=json.dumps(parsed_data.get("arguments", {})),
-                            description=None,
-                        ),
-                    )
-                ],
-                raw=None,
-            )
+        try:
+            parsed_data = json.loads(json_str)
+            if isinstance(parsed_data, dict) and "name" in parsed_data:
+                return ChatMessage(
+                    role="assistant",
+                    content=None,
+                    tool_calls=[
+                        ToolCall(
+                            id=f"call_{uuid.uuid4().hex}",
+                            type="function",
+                            function=FunctionCall(
+                                name=parsed_data["name"],
+                                arguments=json.dumps(parsed_data.get("arguments", {})),
+                                description=None,
+                            ),
+                        )
+                    ],
+                    raw=None,
+                )
+        except json.JSONDecodeError:
+            pass
 
     return ChatMessage(role="assistant", content=content, tool_calls=[], raw=None)
 
@@ -325,7 +374,7 @@ class OpenAIServerModel(Model):
             "n": 1,
             "temperature": 0,
             "top_p": 1.0,
-            "max_tokens": 8192,
+            "max_tokens": 512,
         }
 
         if stop_sequences is not None:
