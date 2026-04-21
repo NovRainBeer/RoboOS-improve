@@ -34,7 +34,7 @@ model:
     cloud_model: "RoboBrain2.5-8B-NV"
     cloud_type: "default"
     cloud_api_key: "EMPTY"
-    cloud_server: "http://127.0.0.1:4567/v1"
+    cloud_server: "http://127.0.0.1:4568/v1"
     max_chat_message: 50
 
 

@@ -1,4 +1,5 @@
 from typing import Any, Dict, Union
+import json
 
 import yaml
 from agents.prompts import MASTER_PLANNING_PLANNING
@@ -116,4 +117,35 @@ class GlobalTaskPlanner:
         self.display_profiling_info("response", response)
         self.display_profiling_info("response.usage", response.usage)
 
-        return response.choices[0].message.content
+        raw_content = response.choices[0].message.content
+        self.display_profiling_info("raw planner content", raw_content)
+
+        try:
+            parsed = json.loads(raw_content)
+        except Exception:
+            # 如果模型没按 JSON 返回，先原样返回，方便排查
+            return raw_content
+
+        # all_robots_name 一般就是类似 ["demo_robot"]
+        if isinstance(all_robots_name, list):
+            valid_robot_names = all_robots_name
+        else:
+            # 防御式处理，避免某些情况下不是 list
+            valid_robot_names = [all_robots_name]
+
+        # 单机器人场景：强制对齐 robot_name
+        if len(valid_robot_names) == 1:
+            only_robot = valid_robot_names[0]
+            for item in parsed.get("subtask_list", []):
+                item["robot_name"] = only_robot
+        else:
+            # 多机器人场景：至少做白名单校验
+            for item in parsed.get("subtask_list", []):
+                if item.get("robot_name") not in valid_robot_names:
+                    raise ValueError(
+                        f"Invalid robot_name from planner: {item.get('robot_name')}, "
+                        f"valid names are: {valid_robot_names}"
+                    )
+
+        self.display_profiling_info("normalized planner content", parsed)
+        return json.dumps(parsed, ensure_ascii=False)
