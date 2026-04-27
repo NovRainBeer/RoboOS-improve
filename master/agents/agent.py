@@ -7,6 +7,7 @@ import threading
 import uuid
 from collections import defaultdict
 from typing import Dict
+from .sop_layer import SOPManager
 
 import yaml
 from agents.planner import GlobalTaskPlanner
@@ -26,6 +27,7 @@ class GlobalAgent:
 
         self._init_scene(self.config["profile"])
         self._start_listener()
+        self.sop = SOPManager()
 
     def _init_logger(self, logger_config):
         """Initialize an independent logger for GlobalAgent"""

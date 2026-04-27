@@ -53,6 +53,15 @@ source /opt/ros/humble/setup.bash
 export TURTLEBOT3_MODEL=burger
 ros2 launch turtlebot3_gazebo turtlebot3_world.launch.py x_pose:=2.0 y_pose:=1.0
 
+
+第二个小车
+source /opt/ros/humble/setup.bash
+ros2 run gazebo_ros spawn_entity.py \
+  -entity turtle2 \
+  -file /opt/ros/humble/share/turtlebot3_gazebo/models/turtlebot3_burger/model.sdf \
+  -robot_namespace /robot2 \
+  -x 2.0 -y 0.0 -z 0.01
+
 4. 启动 Nav2
 conda activate RoboOS
 source /opt/ros/humble/setup.bash
@@ -62,6 +71,25 @@ ros2 launch turtlebot3_navigation2 navigation2.launch.py use_sim_time:=True map:
 5. 设定初始点，告诉地图初始点在哪里
 source /opt/ros/humble/setup.bash
 ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
+'{
+  header: {frame_id: "map"},
+  pose: {
+    pose: {
+      position: {x: 4.0, y: 1.5, z: 0.0},
+      orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}
+    },
+    covariance: [0.25, 0.0, 0.0, 0.0, 0.0, 0.0,
+                 0.0, 0.25, 0.0, 0.0, 0.0, 0.0,
+                 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                 0.0, 0.0, 0.0, 0.0, 0.0, 0.0685]
+  }
+}'
+
+第二个小车
+source /opt/ros/humble/setup.bash
+ros2 topic pub --once /robot2/initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
 '{
   header: {frame_id: "map"},
   pose: {
@@ -208,3 +236,11 @@ curl -X POST http://127.0.0.1:5000/publish_task -H "Content-Type: application/js
 curl -X POST http://127.0.0.1:5000/publish_task -H "Content-Type: application/json" -d '{"task":"立即停止小车","refresh":false}'
 
 curl -X POST http://127.0.0.1:5000/publish_task -H "Content-Type: application/json" -d '{"task":"让小车去 kitchen","refresh":false}'
+
+
+
+curl -X POST http://127.0.0.1:5000/publish_task -H "Content-Type: application/json" -d '{"task":"让小车依次去 kitchenTable、servingTable、customTable","refresh":false}'
+
+
+curl -X POST http://127.0.0.1:5000/publish_task -H "Content-Type: application/json" -d '{"task":"让小车拿苹果去服务台装盘后去顾客那上交","refresh":false}'
+

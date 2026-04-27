@@ -24,14 +24,14 @@ ROS_SETUP = "source /opt/ros/humble/setup.bash"
 
 # fallback 目标点；如果存在 nav_target_position.yaml，会被文件覆盖
 KNOWN_TARGETS = {
-    "home": {"x": 0.0, "y": 0.0, "yaw": 0.0},
-    "kitchenTable": {"x": 0.5, "y": 0.0, "yaw": 0.0},
-    "servingTable": {"x": 0.0, "y": 0.8, "yaw": 1.57},
-    "customTable": {"x": -0.5, "y": 0.8, "yaw": 1.57},
-    "user": {"x": 0.0, "y": 0.0, "yaw": 0.0},
+    "spawn": {"x": 0.0, "y": 0.0, "yaw": 0.0},
+    "kitchenTable": {"x": 3.0, "y": 2.0, "yaw": 0.0},
+    "servingTable": {"x": 3.0, "y": -1.0, "yaw": 1.57},
+    "customTable": {"x": 0.0, "y": 1.0, "yaw": 1.57},
+    "user": {"x": 0.5, "y": -0.5, "yaw": 0.0},
 }
 
-NAV_TARGET_FILE = Path(__file__).with_name("nav_target_position.yaml")
+NAV_TARGET_FILE = Path(__file__).with_name("nav_targets.yaml")
 
 
 def _load_nav_targets() -> dict:
@@ -203,51 +203,6 @@ def _state_reply(message: str):
         "holding": ROBOT_STATUS["holding"],
         "status": ROBOT_STATUS["status"],
     }
-
-@mcp.tool()
-async def move_linear(direction: str, duration: float, speed: float) -> tuple[str, dict]:
-    direction = direction.lower().strip()
-    if direction not in ["forward", "backward"]:
-        raise ValueError("direction must be 'forward' or 'backward'")
-
-    duration = max(0.1, min(float(duration), 5.0))
-    speed = max(0.02, min(abs(float(speed)), 0.30))
-    vx = speed if direction == "forward" else -speed
-
-    publish_rate = 20
-    times = max(1, int(round(duration * publish_rate)))
-
-    move_cmd = f'''
-{ROS_SETUP} && \
-ros2 topic pub --times {times} -r {publish_rate} {TOPIC_NAME} geometry_msgs/msg/Twist \
-"{{linear: {{x: {vx}, y: 0.0, z: 0.0}}, angular: {{x: 0.0, y: 0.0, z: 0.0}}}}"
-'''
-
-    stop_cmd = f'''
-{ROS_SETUP} && \
-ros2 topic pub --times 5 -r 20 {TOPIC_NAME} geometry_msgs/msg/Twist \
-"{{linear: {{x: 0.0, y: 0.0, z: 0.0}}, angular: {{x: 0.0, y: 0.0, z: 0.0}}}}"
-'''
-
-    ROBOT_STATUS["status"] = "moving"
-    ROBOT_STATUS["last_linear_cmd"] = vx
-    ROBOT_STATUS["last_angular_cmd"] = 0.0
-
-    try:
-        _run_bash(move_cmd, check=True, silence=True)
-        _run_bash(stop_cmd, check=True, silence=True)
-
-        ROBOT_STATUS["status"] = "idle"
-        ROBOT_STATUS["last_linear_cmd"] = 0.0
-        _sync_state_from_odom()
-
-        result = f"Move {direction} success, duration={duration}, speed={speed}"
-        print(result)
-        return _state_reply(result)
-
-    except Exception as e:
-        ROBOT_STATUS["status"] = "error"
-        raise RuntimeError(f"Failed to move robot linearly: {e}") from e
     
 @mcp.tool()
 async def get_robot_state() -> tuple[str, dict]:
@@ -336,8 +291,7 @@ ros2 topic pub --times {times} -r 10 {TOPIC_NAME} geometry_msgs/msg/Twist \
 @mcp.tool()
 async def navigate_to_target(target: str) -> tuple[str, dict]:
     """
-    Navigate to a named semantic target using Nav2 BasicNavigator.
-    Requires Nav2 to be launched and initial pose to be set.
+    Navigate the robot to a named target.
     """
     if not isinstance(target, str) or not target.strip():
         raise ValueError("target must be a non-empty string")

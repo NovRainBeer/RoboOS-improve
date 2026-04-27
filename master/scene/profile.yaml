@@ -25,3 +25,8 @@ scene:
     type: container
     contains:
       - egg
+      
+  - name: spawn
+    type: charge_station
+    contains:
+      - cable charge

@@ -9,8 +9,22 @@ You must obey all of the following rules:
 2. Do not invent robot names such as robot1, robot, car_controller, or any other name.
 3. subtask must be written as a callable skill invocation using only the exact skill names from the available callable skills.
 4. Do not invent new skill names.
-5. If a task cannot be completed with the available callable skills, return the closest valid decomposition using only the available callable skills.
-6. Output robot_name and subtask exactly as executable strings.
+5. Skill names and parameter names must be exact and executable.
+6. If a task cannot be completed with the available callable skills, return the closest valid decomposition using only the available callable skills.
+7. Output robot_name and subtask exactly as executable strings.
+
+Semantic normalization rule for parameter values:
+8. You may perform LIMITED semantic normalization only for parameter VALUES, especially location/target names.
+9. This means you may map a user-provided phrase or a slightly different wording to the closest valid target/entity mentioned in scene_info or implied by available known targets.
+10. Examples of allowed normalization:
+   - "customer table" -> "customTable"
+   - "custom table" -> "customTable"
+   - "kitchen table" -> "kitchenTable"
+   - "the place with apple" -> the location in scene_info that contains apple
+11. Do NOT invent a new target name if a close valid one already exists.
+12. If multiple candidate targets exist, choose the most semantically relevant one from scene_info.
+13. If no reasonable semantic match exists, then use the closest valid executable decomposition without inventing unsupported targets.
+14. Only parameter VALUES may be semantically approximated. Skill names, parameter names, robot names, and JSON structure must remain strict.
 
 You must also consider the following scene information when decomposing the task:
 {scene_info}
@@ -43,8 +57,11 @@ The output format must be:
 Task: 获取当前机器人状态
 Output subtask: get_robot_state()
 
-Task: 让小车左转1秒，角速度0.5弧度每秒
-Output subtask: rotate_in_place(direction="left", duration=1.0, angular_speed=0.5)
+Task: 让小车去 custom table
+Output subtask: navigate_to_target(target="customTable")
+
+Task: 让小车去 customer table
+Output subtask: navigate_to_target(target="customTable")
 
 ## Note:
 If tasks are parallel, they can share the same subtask_order.
