@@ -60,7 +60,7 @@ ros2 run gazebo_ros spawn_entity.py \
   -entity turtle2 \
   -file /opt/ros/humble/share/turtlebot3_gazebo/models/turtlebot3_burger/model.sdf \
   -robot_namespace /robot2 \
-  -x 2.0 -y 0.0 -z 0.01
+  -x -2.0 -y 1.0 -z 0.01
 
 4. 启动 Nav2
 conda activate RoboOS
@@ -90,11 +90,11 @@ ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
 第二个小车
 source /opt/ros/humble/setup.bash
 ros2 topic pub --once /robot2/initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
-'{
+'{     
   header: {frame_id: "map"},
   pose: {
     pose: {
-      position: {x: 2.0, y: 1.0, z: 0.0},
+      position: {x: -4.0, y: 1.5, z: 0.0},
       orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}
     },
     covariance: [0.25, 0.0, 0.0, 0.0, 0.0, 0.0,

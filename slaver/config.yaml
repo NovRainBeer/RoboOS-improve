@@ -40,13 +40,9 @@ camera:
 
 # Robot 
 robot:
-  # "local" with a fold name such as "demo_robot"
-  # "remote" with URL such as "http://127.0.0.1:8000", and run the Python script 'skill.py' on the robot itself.
-  # call_type: local
-  # path: "demo_robot_local"
-  name: demo_robot
+  name: inspection_robot
   call_type: remote
-  path: "http://127.0.0.1:8000"
+  path: "http://10.184.5.20:8000"
 
 # Output reasoning context, time cost and other information
 profiling: true

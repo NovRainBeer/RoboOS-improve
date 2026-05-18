@@ -30,3 +30,4 @@ scene:
     type: charge_station
     contains:
       - cable charge
+      
