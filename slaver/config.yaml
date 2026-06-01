@@ -42,7 +42,7 @@ camera:
 robot:
   name: inspection_robot
   call_type: remote
-  path: "http://10.184.5.20:8000"
+  path: "http://127.0.0.1:8000"
 
 # Output reasoning context, time cost and other information
 profiling: true
