@@ -23,7 +23,7 @@ import json
 import re
 from io import BytesIO
 from typing import TYPE_CHECKING, Any, Dict
-
+import os
 import yaml
 from flag_scale.flagscale.agent.collaboration import Collaborator
 
@@ -47,6 +47,7 @@ BASE_BUILTIN_MODULES = [
     "time",
     "unicodedata",
 ]
+
 
 
 def escape_code_brackets(text: str) -> str:
@@ -151,8 +152,8 @@ def make_image_url(base64_image):
 
 class Config:
     @classmethod
-    def load_config(cls, config_path="/home/rosos/qiao/code/RoboOS/slaver/config.yaml"):
-        """Initialize configuration"""
+    def load_config(cls, config_path=None):
+        config_path = config_path or os.environ.get("ROBOOS_CONFIG", "config.yaml")
         with open(config_path, "r", encoding="utf-8") as f:
             config = yaml.safe_load(f)
         return config

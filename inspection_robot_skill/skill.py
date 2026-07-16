@@ -204,6 +204,65 @@ async def get_noise_data() -> Dict[str, Any]:
     }
     return await send_robot(payload)
 
+DEMO_PATH_ID = os.getenv("DEMO_PATH_ID", "7")
+
+DEMO_POINTS = {
+    "取物点": os.getenv("POINT_PICKUP", "78"),
+    "服务台": os.getenv("POINT_SERVICE", "79"),
+    "顾客点": os.getenv("POINT_CUSTOMER", "81"),
+    "充电预备": os.getenv("POINT_CHARGE_READY", "82"),
+}
+
+
+@mcp.tool()
+async def go_to_named_point(point_name: str) -> Dict[str, Any]:
+    """按语义点位名称控制真实巡检机器人快速到达。可用点位：取物点、服务台、顾客点、充电预备。"""
+    if point_name not in DEMO_POINTS:
+        return {
+            "status": "error",
+            "error": f"unknown point_name: {point_name}",
+            "available_points": list(DEMO_POINTS.keys()),
+        }
+
+    return await quick_arrival(
+        path_id=DEMO_PATH_ID,
+        path_position_id=DEMO_POINTS[point_name],
+    )
+
+
+@mcp.tool()
+async def delivery_demo(task: str) -> Dict[str, Any]:
+    """
+    执行实机配送演示：让小车拿苹果去服务台装盘后去顾客那上交。
+    当前机器人没有机械臂，因此不执行真实抓取、放置、递交。
+    实际流程：前往取物点，等待人工放置苹果；前往服务台，等待人工装盘；前往顾客点，完成交付；最后返回充电点。
+    """
+    steps = []
+
+    steps.append({"step": 1, "action": "前往取物点", "target": "点位1"})
+    steps.append(await go_to_named_point("取物点"))
+    steps.append({"note": "已到达取物点，等待人工放置苹果"})
+
+    steps.append({"step": 2, "action": "前往服务台", "target": "点位2"})
+    steps.append(await go_to_named_point("服务台"))
+    steps.append({"note": "已到达服务台，等待人工装盘"})
+
+    steps.append({"step": 3, "action": "前往顾客点", "target": "点位4"})
+    steps.append(await go_to_named_point("顾客点"))
+    steps.append({"note": "已到达顾客点，完成交付"})
+
+    steps.append({"step": 4, "action": "前往充电预备", "target": "充电预备"})
+    steps.append(await go_to_named_point("充电预备"))
+
+    steps.append({"step": 5, "action": "回充"})
+    steps.append(await return_charge())
+
+    return {
+        "status": "success",
+        "task": task,
+        "message": "实机配送演示流程已下发",
+        "steps": steps,
+    }
 
 if __name__ == "__main__":
     print("Starting inspection robot skill server")

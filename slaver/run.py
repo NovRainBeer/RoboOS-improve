@@ -7,6 +7,9 @@ import signal
 import sys
 import threading
 import time
+
+import argparse
+
 from contextlib import AsyncExitStack
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -21,7 +24,17 @@ from mcp.client.streamable_http import streamablehttp_client
 from tools.utils import Config
 from slaver.tools.tool_matcher import ToolMatcher
 
-config = Config.load_config()
+
+def _parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default=os.environ.get("ROBOOS_CONFIG", "config.yaml"))
+    args, _ = parser.parse_known_args()
+    return args
+
+args = _parse_args()
+config = Config.load_config(args.config)
+
+
 collaborator = Collaborator.from_config(config=config["collaborator"])
 
 

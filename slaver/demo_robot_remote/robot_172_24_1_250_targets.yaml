@@ -1,0 +1,47 @@
+robot_name: robot_172_24_1_250
+robot_api_base: "ws://172.24.1.250:5000"
+
+targets:
+  A:
+    path_id: "9"
+    path_position_id: "91"
+
+  B:
+    path_id: "9"
+    path_position_id: "92"
+
+  C:
+    path_id: "9"
+    path_position_id: "93"
+
+  point1:
+    path_id: "9"
+    path_position_id: "91"
+
+  point2:
+    path_id: "9"
+    path_position_id: "92"
+
+  point3:
+    path_id: "9"
+    path_position_id: "93"
+
+  chargingReady:
+    path_id: "9"
+    path_position_id: "97"
+
+  chargingStation:
+    path_id: "9"
+    path_position_id: "98"
+
+  servingTable:
+    path_id: "9"
+    path_position_id: "92"
+
+  customerTable:
+    path_id: "9"
+    path_position_id: "93"
+
+  customTable:
+    path_id: "9"
+    path_position_id: "93"

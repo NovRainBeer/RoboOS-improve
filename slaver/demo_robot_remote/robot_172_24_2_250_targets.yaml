@@ -1,0 +1,48 @@
+robot_name: robot_172_24_2_250
+robot_api_base: "ws://172.24.2.250:5000"
+
+targets:
+  A:
+    path_id: "8"
+    path_position_id: "80"
+
+  B:
+    path_id: "8"
+    path_position_id: "81"
+
+  C:
+    path_id: "8"
+    path_position_id: "82"
+
+  D:
+    path_id: "8"
+    path_position_id: "83"
+
+  point1:
+    path_id: "8"
+    path_position_id: "80"
+
+  point2:
+    path_id: "8"
+    path_position_id: "81"
+
+  point3:
+    path_id: "8"
+    path_position_id: "82"
+
+  point4:
+    path_id: "8"
+    path_position_id: "83"
+    
+    
+    servingTable:
+    path_id: "8"
+    path_position_id: "82"
+
+  customerTable:
+    path_id: "8"
+    path_position_id: "83"
+
+  customTable:
+    path_id: "8"
+    path_position_id: "83"
