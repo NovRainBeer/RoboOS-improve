@@ -108,7 +108,7 @@ ros2 topic pub --once /robot2/initialpose geometry_msgs/msg/PoseWithCovarianceSt
 
 6. 启动 skill server
 终端 3
-cd ~/qiao/code/RoboOS
+cd ~/qiao/RoboOS_multi_car
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
 source /opt/ros/humble/setup.bash
 export TURTLEBOT3_MODEL=burger
@@ -128,7 +128,7 @@ redis-server
 conda activate RoboOS
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
 export PYTHONNOUSERSITE=1
-cd ~/qiao/code/RoboOS/master
+cd ~/qiao/RoboOS_multi_car/master
 python -s run.py
 正常会看到：
 Running on http://127.0.0.1:5000
@@ -137,7 +137,7 @@ Running on http://127.0.0.1:5000
 conda activate RoboOS
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
 export PYTHONNOUSERSITE=1
-cd ~/qiao/code/RoboOS/slaver
+cd ~/qiao/RoboOS_multi_car/slaver
 python -s run.py
 正常你会看到：
 connecting to robot...
