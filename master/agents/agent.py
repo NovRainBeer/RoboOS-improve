@@ -250,17 +250,131 @@ class GlobalAgent:
             return False
 
         try:
-            worker_list = {
-                subtask["robot_name"]
-                for subtask in reasoning_and_subtasks["subtask_list"]
-                if isinstance(subtask, dict) and "robot_name" in subtask
-            }
+            subtasks = reasoning_and_subtasks["subtask_list"]
+            if not isinstance(subtasks, list) or not subtasks:
+                return False
+
+            worker_list = set()
+            for subtask in subtasks:
+                if not isinstance(subtask, dict):
+                    return False
+
+                robot_name = subtask.get("robot_name")
+                if not isinstance(robot_name, str) or not robot_name:
+                    return False
+                worker_list.add(robot_name)
+
+                # Structured direct-tool calls are optional for normal tasks.
+                # When tool_name is present, tool_arguments must remain a JSON object.
+                tool_name = subtask.get("tool_name")
+                if tool_name is not None:
+                    if not isinstance(tool_name, str) or not tool_name.strip():
+                        return False
+                    if not isinstance(subtask.get("tool_arguments"), dict):
+                        return False
+
+                if not isinstance(subtask.get("subtask"), str):
+                    return False
 
             robots_list = set(self.collaborator.read_all_agents_name())
             return worker_list.issubset(robots_list)
 
         except (TypeError, KeyError):
             return False
+
+    def _check_plan_geometry(self, reasoning_and_subtasks: dict) -> str:
+        """Basic geometric sanity checks on the model-generated plan.
+
+        Returns an empty string if the plan looks reasonable, or a
+        newline-separated list of errors that should be fed back to the LLM.
+        """
+        errors: list = []
+        subtask_list = reasoning_and_subtasks.get("subtask_list", [])
+        for subtask in subtask_list:
+            tool_args = subtask.get("tool_arguments") or {}
+            plan = tool_args.get("plan") or {}
+            waypoints = plan.get("waypoints") or []
+
+            if not waypoints:
+                continue
+
+            # Check 1: spawn at start and end
+            if str(waypoints[0].get("name", "")) != "spawn":
+                errors.append("First waypoint must be spawn.")
+            if str(waypoints[-1].get("name", "")) != "spawn":
+                errors.append("Last waypoint must be spawn.")
+
+            # Check 2: row-transition transit waypoints
+            cabinet_wps = [
+                (i, wp) for i, wp in enumerate(waypoints)
+                if str(wp.get("name", "")) in {"A1","A2","A3","A4","A5","A6",
+                                                 "B1","B2","B3","B4","B5","B6"}
+            ]
+            for idx in range(len(cabinet_wps) - 1):
+                i_a, wp_a = cabinet_wps[idx]
+                i_b, wp_b = cabinet_wps[idx + 1]
+                name_a = str(wp_a["name"])
+                name_b = str(wp_b["name"])
+                row_a = name_a[0]
+                row_b = name_b[0]
+                if row_a != row_b:
+                    # Row transition detected
+                    gap_wps = waypoints[i_a + 1 : i_b]
+                    gap_names = [str(w.get("name", "")) for w in gap_wps]
+                    if not gap_wps:
+                        errors.append(
+                            f"No transit waypoints between {name_a} and {name_b}. "
+                            f"A T_* transit point outside the cabinet array end is required."
+                        )
+                    else:
+                        has_end_bypass = any(
+                            str(w.get("name", "")).upper().startswith("T_")
+                            for w in gap_wps
+                        )
+                        if not has_end_bypass:
+                            errors.append(
+                                f"Waypoints between {name_a} and {name_b} "
+                                f"({gap_names}) do not include a T_* transit point. "
+                                f"Add a T_* waypoint outside the cabinet array boundary."
+                            )
+
+            # Check 3: B-row y must be less than center y (ny < 0)
+            # A-row y must be greater than center y (ny > 0)
+            for wp in waypoints:
+                name = str(wp.get("name", ""))
+                if not name or name.startswith("T_") or name == "spawn":
+                    continue
+                try:
+                    wy = float(wp["y"])
+                except (KeyError, ValueError, TypeError):
+                    continue
+                if name.startswith("A"):
+                    if wy <= 2.0:
+                        errors.append(
+                            f"{name}: y={wy} is not greater than cabinet center y=2.0. "
+                            f"Expected y≈2.85 for row A inspection pose."
+                        )
+                elif name.startswith("B"):
+                    if wy >= -2.0:
+                        errors.append(
+                            f"{name}: y={wy} is not less than cabinet center y=-2.0. "
+                            f"Expected y≈-2.85 for row B inspection pose."
+                        )
+
+            # Check 4: distance sanity (rough)
+            reported = plan.get("total_distance_m")
+            if reported is not None:
+                try:
+                    reported = float(reported)
+                    if reported < 20 or reported > 80:
+                        errors.append(
+                            f"total_distance_m={reported} is outside expected range "
+                            f"(20-80 m for a 12-cabinet inspection). Recompute."
+                        )
+                except (ValueError, TypeError):
+                    errors.append("total_distance_m must be a number.")
+
+        return "\n".join(errors) if errors else ""
 
     def publish_global_task(self, task: str, refresh: bool, task_id: str) -> Dict:
         self.logger.info(f"Publishing global task: {task}")
@@ -300,6 +414,37 @@ class GlobalAgent:
             )
             raise ValueError("Planner returned unusable subtasks")
 
+        # --- Geometry quality retry loop ---
+        # After structure passes, validate geometry and retry with feedback.
+        geo_attempt = 0
+        geo_errors = ""
+        geo_max = self.config["model"]["model_retry_planning"]
+        while geo_attempt < geo_max:
+            geo_errors = self._check_plan_geometry(reasoning_and_subtasks)
+            if not geo_errors:
+                break
+            self.logger.warning(
+                f"Geometry attempt {geo_attempt + 1} failed with errors:\n{geo_errors}"
+            )
+            try:
+                response = self.planner.forward_with_feedback(task, geo_errors)
+            except Exception:
+                response = self.planner.forward(
+                    f"{task}\n\nPrevious plan rejected with errors:\n{geo_errors}\nPlease fix."
+                )
+            reasoning_and_subtasks = self._extract_json(response)
+            if not self.reasoning_and_subtasks_is_right(reasoning_and_subtasks):
+                self.logger.warning("Structure broke during geometry retry; restarting.")
+                response = self.planner.forward(task)
+                reasoning_and_subtasks = self._extract_json(response)
+            geo_attempt += 1
+
+        if geo_errors:
+            self.logger.warning(
+                f"Geometry retries exhausted ({geo_max}). "
+                f"Proceeding with remaining errors:\n{geo_errors}"
+            )
+
         self.logger.info(f"Received reasoning and subtasks:\n{reasoning_and_subtasks}")
         subtask_list = reasoning_and_subtasks.get("subtask_list", [])
         grouped_tasks = self._group_tasks_by_order(subtask_list)
@@ -326,8 +471,36 @@ class GlobalAgent:
                 subtask_data = {
                     "task_id": task_id,
                     "task": tasks["subtask"],
-                    "order": order_flag,
+                    "order_flag": order_flag,
+                    "refresh": refresh,
                 }
+
+                # Preserve the model-generated structured call exactly.
+                # Do not stringify tool_arguments, otherwise the Slaver model may
+                # reinterpret or truncate the complete waypoint plan.
+                if tasks.get("tool_name") is not None:
+                    tool_args = tasks["tool_arguments"]
+                    # Defense: recover if the LLM accidentally stringified tool_arguments.
+                    if isinstance(tool_args, str):
+                        self.logger.warning(
+                            f"tool_arguments was a string, attempting JSON parse: "
+                            f"{tool_args[:200]}..."
+                        )
+                        try:
+                            tool_args = json.loads(tool_args)
+                        except json.JSONDecodeError as exc:
+                            self.logger.error(
+                                f"tool_arguments is a non-JSON string and cannot be recovered: {exc}"
+                            )
+                            raise TypeError(
+                                "tool_arguments must be a JSON object, not a plain string"
+                            ) from exc
+                    if not isinstance(tool_args, dict):
+                        raise TypeError(
+                            f"tool_arguments must be a dict, got {type(tool_args).__name__}"
+                        )
+                    subtask_data["tool_name"] = tasks["tool_name"]
+                    subtask_data["tool_arguments"] = tool_args
                 if refresh:
                     self.collaborator.clear_agent_status(robot_name)
                 self.collaborator.send(

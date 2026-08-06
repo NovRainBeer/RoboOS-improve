@@ -1,0 +1,251 @@
+scene:
+  - name: cabinet_layout
+    type: inspection_scene
+
+    frame_id: map
+
+    origin:
+      name: spawn
+      x: -0.5
+      y: 0.0
+      yaw: 0.0
+
+    field_bounds:
+      xmin: -1.0
+      xmax: 12.0
+      ymin: -4.0
+      ymax: 4.0
+
+    robot:
+      model: turtlebot3_burger
+      radius: 0.15
+
+    inspection_constraints:
+      # 指机器人base_link中心到柜子正面的距离
+      cabinet_front_to_base_link: 0.60
+
+      # 用于校验定位误差、控制误差和机器人外形余量
+      safety_margin: 0.05
+
+      face_cabinet_at_inspection: true
+      dwell_seconds: 2.0
+
+    layout:
+      row_count: 2
+      cabinets_per_row: 6
+
+      # 柜子间距定义为相邻柜子中心之间的距离
+      spacing_definition: center_to_center
+      spacing: 2.0
+
+      first_cabinet_center_x: 0.5
+
+      row_a_center_y: 2.0
+      row_b_center_y: -2.0
+
+      cabinet_size:
+        x: 0.5
+        y: 0.5
+        z: 1.8
+
+      description: >
+        There are two rows of cabinets. Row A is above the origin and its
+        cabinet fronts face toward positive y. Row B is below the origin and
+        its cabinet fronts face toward negative y. The robot starts at spawn.
+        The inspection pose for each cabinet must be calculated from the
+        cabinet center, cabinet size, front normal, and inspection distance.
+
+    cabinets:
+      - name: A1
+        type: cabinet
+        center:
+          x: 0.5
+          y: 2.0
+        size:
+          x: 0.5
+          y: 0.5
+          z: 1.8
+        front_normal:
+          x: 0.0
+          y: 1.0
+
+      - name: A2
+        type: cabinet
+        center:
+          x: 2.5
+          y: 2.0
+        size:
+          x: 0.5
+          y: 0.5
+          z: 1.8
+        front_normal:
+          x: 0.0
+          y: 1.0
+
+      - name: A3
+        type: cabinet
+        center:
+          x: 4.5
+          y: 2.0
+        size:
+          x: 0.5
+          y: 0.5
+          z: 1.8
+        front_normal:
+          x: 0.0
+          y: 1.0
+
+      - name: A4
+        type: cabinet
+        center:
+          x: 6.5
+          y: 2.0
+        size:
+          x: 0.5
+          y: 0.5
+          z: 1.8
+        front_normal:
+          x: 0.0
+          y: 1.0
+
+      - name: A5
+        type: cabinet
+        center:
+          x: 8.5
+          y: 2.0
+        size:
+          x: 0.5
+          y: 0.5
+          z: 1.8
+        front_normal:
+          x: 0.0
+          y: 1.0
+
+      - name: A6
+        type: cabinet
+        center:
+          x: 10.5
+          y: 2.0
+        size:
+          x: 0.5
+          y: 0.5
+          z: 1.8
+        front_normal:
+          x: 0.0
+          y: 1.0
+
+      - name: B1
+        type: cabinet
+        center:
+          x: 0.5
+          y: -2.0
+        size:
+          x: 0.5
+          y: 0.5
+          z: 1.8
+        front_normal:
+          x: 0.0
+          y: -1.0
+
+      - name: B2
+        type: cabinet
+        center:
+          x: 2.5
+          y: -2.0
+        size:
+          x: 0.5
+          y: 0.5
+          z: 1.8
+        front_normal:
+          x: 0.0
+          y: -1.0
+
+      - name: B3
+        type: cabinet
+        center:
+          x: 4.5
+          y: -2.0
+        size:
+          x: 0.5
+          y: 0.5
+          z: 1.8
+        front_normal:
+          x: 0.0
+          y: -1.0
+
+      - name: B4
+        type: cabinet
+        center:
+          x: 6.5
+          y: -2.0
+        size:
+          x: 0.5
+          y: 0.5
+          z: 1.8
+        front_normal:
+          x: 0.0
+          y: -1.0
+
+      - name: B5
+        type: cabinet
+        center:
+          x: 8.5
+          y: -2.0
+        size:
+          x: 0.5
+          y: 0.5
+          z: 1.8
+        front_normal:
+          x: 0.0
+          y: -1.0
+
+      - name: B6
+        type: cabinet
+        center:
+          x: 10.5
+          y: -2.0
+        size:
+          x: 0.5
+          y: 0.5
+          z: 1.8
+        front_normal:
+          x: 0.0
+          y: -1.0
+
+    planning_requirements:
+      start_target: spawn
+      return_target: spawn
+
+      visit_requirements:
+        visit_all_cabinets: true
+        visit_each_cabinet_exactly_once: true
+
+      optimization_objective:
+        primary: safe_feasible_inspection_route
+        require_global_shortest: false
+
+      route_constraints:
+        middle_corridor_traversable: false
+        row_transition_must_use_array_end: true
+
+        forbidden_middle_corridor:
+          xmin: 0.25
+          xmax: 10.75
+          ymin: -1.75
+          ymax: 1.75
+
+        allowed_bypass_sides:
+          - left
+          - right
+
+      waypoint_requirements:
+        calculate_inspection_poses_from_geometry: true
+        allow_transit_waypoints: true
+        face_cabinet_at_inspection_points: true
+
+      execution_constraints:
+        - "Do not place an inspection waypoint inside a cabinet."
+        - "Do not travel through the forbidden middle corridor."
+        - "Transition between row A and row B must go around the left or right end."
+        - "Nav2 handles detailed obstacle avoidance between valid high-level waypoints."
+        - "The route must be safe and reasonable; it does not have to be globally shortest."

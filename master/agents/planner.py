@@ -100,7 +100,7 @@ class GlobalTaskPlanner:
                 messages=messages,
                 temperature=0,
                 top_p=1.0,
-                max_tokens=256,
+                max_tokens=2000,
                 seed=42,
             )
         except Exception as e:
@@ -147,5 +147,35 @@ class GlobalTaskPlanner:
                         f"valid names are: {valid_robot_names}"
                     )
 
+        # Validate structured tool calls: tool_arguments must be a dict, not a string.
+        for item in parsed.get("subtask_list", []):
+            tool_name = item.get("tool_name")
+            if tool_name is not None:
+                tool_args = item.get("tool_arguments")
+                if isinstance(tool_args, str):
+                    try:
+                        item["tool_arguments"] = json.loads(tool_args)
+                    except json.JSONDecodeError:
+                        raise TypeError(
+                            f"tool_arguments for '{tool_name}' is a non-JSON string "
+                            f"and cannot be recovered: {str(tool_args)[:200]}"
+                        )
+                if not isinstance(item.get("tool_arguments"), dict):
+                    raise TypeError(
+                        f"tool_arguments for '{tool_name}' must be a JSON object, "
+                        f"got {type(item.get('tool_arguments')).__name__}"
+                    )
+
         self.display_profiling_info("normalized planner content", parsed)
         return json.dumps(parsed, ensure_ascii=False)
+
+    def forward_with_feedback(self, task: str, feedback_errors: str) -> str:
+        """Re-plan with validation feedback appended to the prompt."""
+        task_with_feedback = (
+            f"{task}\n\n"
+            f"Your previous plan was rejected by the validator with these errors:\n"
+            f"{feedback_errors}\n\n"
+            f"Please regenerate the complete plan, fixing every error listed above. "
+            f"Verify every rule before outputting."
+        )
+        return self.forward(task_with_feedback)

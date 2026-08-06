@@ -1,24 +1,17 @@
-kitchenTable:
-  x: 3.0
-  y: 2.0
-  yaw: 0.0
-
-servingTable:
-  x: 3.0
-  y: -1.0
-  yaw: 0.0
-
-customTable:
-  x: 0.0
-  y: 1.0
-  yaw: 1.57
-
-user:
-  x: 0.5
-  y: -0.5
-  yaw: 0.0
-  
 spawn:
-  x: 0.0
+  x: -0.5
   y: 0.0
   yaw: 0.0
+row1_cabinet_1_front: {x: 0.5,  y: 2.85,  yaw: -1.5708}
+row1_cabinet_2_front: {x: 2.5,  y: 2.85,  yaw: -1.5708}
+row1_cabinet_3_front: {x: 4.5,  y: 2.85,  yaw: -1.5708}
+row1_cabinet_4_front: {x: 6.5,  y: 2.85,  yaw: -1.5708}
+row1_cabinet_5_front: {x: 8.5,  y: 2.85,  yaw: -1.5708}
+row1_cabinet_6_front: {x: 10.5, y: 2.85,  yaw: -1.5708}
+
+row2_cabinet_1_front: {x: 0.5,  y: -2.85, yaw: 1.5708}
+row2_cabinet_2_front: {x: 2.5,  y: -2.85, yaw: 1.5708}
+row2_cabinet_3_front: {x: 4.5,  y: -2.85, yaw: 1.5708}
+row2_cabinet_4_front: {x: 6.5,  y: -2.85, yaw: 1.5708}
+row2_cabinet_5_front: {x: 8.5,  y: -2.85, yaw: 1.5708}
+row2_cabinet_6_front: {x: 10.5, y: -2.85, yaw: 1.5708}

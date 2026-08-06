@@ -1,0 +1,95 @@
+scene:
+- name: cabinet_layout
+  type: inspection_scene
+  origin:
+    target: spawn
+    x: 0.0
+    y: 0.0
+    yaw: 0.0
+  layout:
+    row_count: 2
+    cabinets_per_row: 6
+    first_cabinet_x: 0.5
+    spacing: 1.9
+    total_width: 10.0
+    strict_width: true
+    inspection_distance: 0.5
+    description: There are two rows of cabinets. The robot starts from spawn. Each
+      cabinet has one front-center inspection target.
+  available_targets:
+    row1_front_targets:
+    - row1_cabinet_1_front
+    - row1_cabinet_2_front
+    - row1_cabinet_3_front
+    - row1_cabinet_4_front
+    - row1_cabinet_5_front
+    - row1_cabinet_6_front
+    row2_front_targets:
+    - row2_cabinet_1_front
+    - row2_cabinet_2_front
+    - row2_cabinet_3_front
+    - row2_cabinet_4_front
+    - row2_cabinet_5_front
+    - row2_cabinet_6_front
+    return_target: spawn
+  target_poses:
+    spawn:
+      x: 0.0
+      y: 0.0
+      yaw: 0.0
+    row1_cabinet_1_front:
+      x: 0.5
+      y: 1.5
+      yaw: 1.5708
+    row1_cabinet_2_front:
+      x: 2.4
+      y: 1.5
+      yaw: 1.5708
+    row1_cabinet_3_front:
+      x: 4.3
+      y: 1.5
+      yaw: 1.5708
+    row1_cabinet_4_front:
+      x: 6.2
+      y: 1.5
+      yaw: 1.5708
+    row1_cabinet_5_front:
+      x: 8.1
+      y: 1.5
+      yaw: 1.5708
+    row1_cabinet_6_front:
+      x: 10.0
+      y: 1.5
+      yaw: 1.5708
+    row2_cabinet_1_front:
+      x: 0.5
+      y: -1.5
+      yaw: -1.5708
+    row2_cabinet_2_front:
+      x: 2.4
+      y: -1.5
+      yaw: -1.5708
+    row2_cabinet_3_front:
+      x: 4.3
+      y: -1.5
+      yaw: -1.5708
+    row2_cabinet_4_front:
+      x: 6.2
+      y: -1.5
+      yaw: -1.5708
+    row2_cabinet_5_front:
+      x: 8.1
+      y: -1.5
+      yaw: -1.5708
+    row2_cabinet_6_front:
+      x: 10.0
+      y: -1.5
+      yaw: -1.5708
+  planning_requirements:
+  - Start from spawn.
+  - Visit all cabinet front targets.
+  - Each cabinet front target should be visited exactly once.
+  - Finally return to spawn.
+  - Prefer a short and continuous path.
+  - Do not invent target names.
+  - Use navigate_to_target(target='...') only.

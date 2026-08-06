@@ -67,4 +67,4 @@ profiling: true
 
 # scene profile
 profile:
-  path: ./scene/profile.yaml
+  path: ./scene/cabinet_profile.yaml

@@ -1,0 +1,729 @@
+我检查了你上传的 `RoboOS_multi_car.zip`。结论是：
+
+**这份工程已经能实现“RoboBrain选择预设柜台目标 → Nav2导航”，但还没有实现你要的“RoboOS读取原始几何文件 → RoboBrain自主计算完整坐标和路径 → 程序只校验、不修正”。**
+
+而且当前有一个会直接导致 Master 无法启动的语法错误。
+
+## 目前已经完成的部分
+
+你的代码不是从零开始，以下部分可以保留。
+
+`master/config.yaml` 已经正确连接到：
+
+```yaml
+cloud_server: "http://127.0.0.1:4568/v1"
+```
+
+并且场景文件已经切换为：
+
+```yaml
+profile:
+  path: ./scene/cabinet_profile.yaml
+```
+
+`slaver/demo_robot_remote/skill.py` 也已经不是原来的假导航，它使用了：
+
+```python
+BasicNavigator()
+nav.goToPose(goal_pose)
+nav.isTaskComplete()
+nav.getResult()
+```
+
+这说明单个命名目标的 Nav2 导航链路已经基本具备。
+
+当前技能能完成：
+
+```text
+navigate_to_target("row1_cabinet_1_front")
+        ↓
+查询 nav_targets.yaml
+        ↓
+得到固定 x、y、yaw
+        ↓
+调用 Nav2
+```
+
+这部分可以作为后续完整方案的底层执行基础。
+
+---
+
+## 第一处严重问题：Master 当前无法启动
+
+你的：
+
+```text
+master/agents/prompts.py
+```
+
+开头写成了：
+
+```python
+MASTER_PLANNING_PLANNING = """
+Available robot names: {robot_name_list}
+
+Available callable skills:
+{robot_tools_info}
+
+You must MASTER_PLANNING_PLANNING = """
+```
+
+第7行的第二个三引号提前结束了字符串，后面的提示词被 Python 当成源代码解析。
+
+我实际执行了：
+
+```bash
+python3 -m py_compile master/agents/prompts.py
+```
+
+结果是：
+
+```text
+SyntaxError: invalid character '，' (U+FF0C)
+```
+
+因此现在运行 Master 时，导入 `agents.prompts` 就会失败。
+
+最少要删除重复内容，让文件开头变成：
+
+```python
+MASTER_PLANNING_PLANNING = """
+Available robot names: {robot_name_list}
+
+Available callable skills:
+{robot_tools_info}
+
+You must obey all of the following general rules:
+...
+"""
+```
+
+---
+
+## 你当前实现的实际上是哪种方法
+
+你的 `cabinet_profile.yaml` 已经直接保存了所有最终巡检坐标：
+
+```yaml
+target_poses:
+  row1_cabinet_1_front:
+    x: 0.5
+    y: 1.5
+    yaw: 1.5708
+```
+
+同时，提示词明确规定：
+
+```text
+Do not output x, y, yaw directly in the subtask.
+Coordinates are stored in nav_targets.yaml and will be resolved by navigate_to_target.
+```
+
+所以当前 RoboBrain 实际只负责生成：
+
+```text
+row1_cabinet_1_front
+row1_cabinet_2_front
+...
+row2_cabinet_1_front
+spawn
+```
+
+然后 `navigate_to_target()` 从：
+
+```text
+slaver/demo_robot_remote/nav_targets.yaml
+```
+
+查询坐标。
+
+也就是：
+
+```text
+RoboBrain：决定目标名称顺序
+程序：提前提供全部坐标
+Nav2：执行坐标
+```
+
+这属于前面说的“工程稳定方案”，不是你刚选择的“完整模型规划方案”。
+
+## 为什么不能算完整自主规划
+
+因为模型没有自行计算以下内容：
+
+```text
+柜子正面位置
+柜子表面到巡检点的距离
+机器人安全半径
+巡检点x/y
+柜台朝向yaw
+路径总距离
+完整waypoints
+```
+
+这些都已经在 YAML 中提前给出了。
+
+所以即使最终机器人成功巡检，也只能说明：
+
+> RoboBrain能够排列预定义目标名称。
+
+不能说明：
+
+> RoboBrain能够根据柜体尺寸和空间布局，自主计算安全巡检点。
+
+---
+
+## 第二处问题：工程里存在三套互相冲突的几何定义
+
+### 1. RoboOS场景文件
+
+`master/scene/cabinet_profile.yaml` 使用：
+
+```text
+间距：1.9m
+x：0.5、2.4、4.3、6.2、8.1、10.0
+巡检点y：±1.5
+```
+
+### 2. 直接测试脚本
+
+`test/test_robobrain_path_planning.py` 使用：
+
+```text
+间距：2.0m
+x：0.5、2.5、4.5、6.5、8.5、10.5
+巡检点y：±1.5
+```
+
+### 3. 我们前面确定的安全几何
+
+考虑柜台体积后应使用：
+
+```text
+间距：2.0m
+柜台中心y：±2.0
+柜台深度：0.5m
+机器人中心距柜面：0.6m
+安全巡检点y：±1.15
+```
+
+因此你现在：
+
+* 直接模型测试是一套布局；
+* RoboOS读取的是另一套布局；
+* 安全仿真需要第三套布局。
+
+这样即使实验成功，也无法进行有效对比。
+
+必须只保留一个唯一几何文件。
+
+建议统一为：
+
+```text
+x = 0.5、2.5、4.5、6.5、8.5、10.5
+柜台中心A排 y=2.0
+柜台中心B排 y=-2.0
+柜台尺寸 0.5×0.5×1.8m
+机器人中心距柜面 0.6m
+```
+
+但场景文件中不能直接写最终巡检点 `±1.15`，应该由 RoboBrain 自己计算。
+
+---
+
+## 第三处问题：当前场景文件把答案直接告诉了模型
+
+你想测试完整能力，场景文件应该只包含原始事实：
+
+```yaml
+- name: A1
+  type: cabinet
+  center:
+    x: 0.5
+    y: 2.0
+  size:
+    x: 0.5
+    y: 0.5
+    z: 1.8
+  front_normal:
+    x: 0.0
+    y: -1.0
+```
+
+而你当前文件包含：
+
+```yaml
+target_poses:
+  row1_cabinet_1_front:
+    x: 0.5
+    y: 1.5
+    yaw: 1.5708
+```
+
+这已经是计算后的答案。
+
+应删除：
+
+```yaml
+available_targets:
+target_poses:
+```
+
+保留：
+
+```yaml
+柜台中心
+柜台尺寸
+正面法向量
+原点
+机器人半径
+安全距离
+场地范围
+任务要求
+```
+
+然后要求 RoboBrain 输出完整计划。
+
+---
+
+## 第四处问题：Planner输出长度不够
+
+当前 `master/agents/planner.py` 中是：
+
+```python
+max_tokens=256
+```
+
+完整计划包含14个 waypoint，每个点至少有：
+
+```json
+{
+  "name": "A1",
+  "x": 0.5,
+  "y": 1.15,
+  "yaw": 1.5708
+}
+```
+
+加上访问顺序、距离和 Master 的子任务结构，256 tokens 很容易截断。
+
+你之前已经遇到过：
+
+```text
+finish_reason: length
+Planner returned invalid JSON
+```
+
+这里至少应改为：
+
+```python
+max_tokens=3200
+```
+
+或者配置化：
+
+```yaml
+model:
+  planning_max_tokens: 3200
+```
+
+然后：
+
+```python
+max_tokens=self.config["model"].get("planning_max_tokens", 3200)
+```
+
+---
+
+## 第五处问题：SOP代码实际上没有生效
+
+`master/agents/agent.py` 中虽然有：
+
+```python
+self.sop = SOPManager()
+```
+
+但后续没有调用：
+
+```python
+self.sop.try_handle(...)
+self.sop.post_process(...)
+```
+
+所以 `sop_layer.py` 当前只是被实例化，没有参与实际规划。
+
+另外，`SOPManager.valid_targets` 中只有：
+
+```python
+kitchenTable
+servingTable
+customer
+user
+spawn
+```
+
+并没有柜台目标。
+
+因此它现在对柜台实验没有实际帮助。
+
+对于这次完整模型能力实验，反而不建议用 SOP 自动生成正确坐标，否则会削弱对模型能力的测试。应该新增一个独立的：
+
+```text
+ModelPlanValidator
+```
+
+只校验，不修正。
+
+---
+
+## 第六处问题：Master和Slaver之间会二次调用模型
+
+当前 Master 产生子任务后，只发送：
+
+```python
+subtask_data = {
+    "task_id": task_id,
+    "task": tasks["subtask"],
+    "order": order_flag,
+}
+```
+
+Slaver收到后，又会让 Slaver侧 RoboBrain 理解这个文本并选择工具。
+
+当前流程是：
+
+```text
+Master RoboBrain生成计划
+        ↓
+计划转成subtask字符串
+        ↓
+Slaver RoboBrain再次理解
+        ↓
+调用navigate_to_target
+```
+
+对于简单单点任务问题不大。
+
+但是对于完整14点 JSON 计划，二次模型调用可能：
+
+```text
+修改坐标
+遗漏点位
+改变顺序
+截断JSON
+只调用第一个点
+```
+
+因此完整规划实验应修改成结构化透传：
+
+```json
+{
+  "task": "Execute model-generated cabinet plan",
+  "tool_name": "execute_cabinet_inspection",
+  "tool_arguments": {
+    "plan": {
+      "visit_order": [],
+      "waypoints": [],
+      "total_distance_m": 0.0
+    }
+  }
+}
+```
+
+Slaver检测到 `tool_name` 后，直接调用：
+
+```python
+await self.session.call_tool(tool_name, tool_arguments)
+```
+
+不再让第二个模型重新解释。
+
+普通 RoboOS任务仍然可以走原来的 Slaver模型逻辑。
+
+---
+
+## 第七处问题：缺少完整计划执行技能
+
+当前技能只有：
+
+```python
+navigate_to_target(target: str)
+```
+
+这只能执行一个预定义目标。
+
+你需要新增：
+
+```python
+execute_cabinet_inspection(plan: dict, strict: bool = True)
+```
+
+内部流程：
+
+```text
+接收RoboBrain原始plan
+        ↓
+检查visit_order和waypoints
+        ↓
+检查坐标、yaw和距离
+        ↓
+不修改任何坐标
+        ↓
+校验失败：直接返回rejected
+校验成功：逐点调用Nav2
+```
+
+不能继续使用：
+
+```text
+13个navigate_to_target子任务
+```
+
+因为那样无法在执行前对整条路径做全局完整性校验。
+
+---
+
+## 第八处问题：当前技能没有安全校验
+
+`navigate_to_target()` 目前只检查：
+
+```python
+目标名称是否存在于 NAV_TARGETS
+```
+
+没有检查：
+
+```text
+是否覆盖12个柜台
+是否重复
+是否返回原点
+坐标是否落入柜体
+距柜面是否安全
+yaw是否朝向柜台
+总距离是否正确
+路径是否接近最短
+```
+
+因此即使模型生成错误路线，技能也无法识别。
+
+你需要新增校验器，并且明确：
+
+```json
+{
+  "coordinates_replaced": false
+}
+```
+
+如果模型生成 `y=1.5` 而正确值应为 `1.15`，必须拒绝：
+
+```text
+status=rejected
+A1 inspection pose is inconsistent with cabinet geometry
+```
+
+不能自动改成1.15。
+
+---
+
+## 第九处问题：Nav2参数不适合当前巡检距离
+
+你的 `nav2_robot1.yaml` 中：
+
+```yaml
+local_costmap:
+  robot_radius: 0.1
+  inflation_radius: 1.0
+
+global_costmap:
+  robot_radius: 0.1
+  inflation_radius: 0.55
+```
+
+问题有两个：
+
+第一，Burger的保守半径应接近：
+
+```yaml
+robot_radius: 0.15
+```
+
+第二，局部膨胀半径 `1.0m` 偏大。如果机器人巡检点距柜面只有0.6m，该点可能处于高代价区域，Nav2可能拒绝接近。
+
+建议初始配置：
+
+```yaml
+robot_radius: 0.15
+inflation_radius: 0.35
+```
+
+而且你的 `use_sim_time` 混合了：
+
+```text
+True
+False
+true
+false
+```
+
+AMCL、controller、local costmap多数是False，global costmap却是True。这会导致仿真时间不同步。
+
+Gazebo仿真时应统一：
+
+```yaml
+use_sim_time: true
+```
+
+---
+
+## 第十处问题：状态读取使用odom，而目标使用map
+
+你的导航目标是：
+
+```python
+goal_pose.header.frame_id = "map"
+```
+
+但 `_sync_state_from_odom()` 读取的是：
+
+```text
+/odom
+```
+
+然后直接拿 `/odom` 坐标与 `NAV_TARGETS` 的 `map` 坐标比较：
+
+```python
+_nearest_semantic_position(x, y)
+```
+
+如果 `map → odom` 不是单位变换，语义位置估计就会错误。
+
+应该读取：
+
+```text
+map → base_link
+```
+
+例如使用 TF2，而不是直接使用 `/odom`：
+
+```text
+tf2_ros.Buffer
+lookup_transform("map", "base_link", ...)
+```
+
+---
+
+## 第十一处问题：导航没有超时机制
+
+当前：
+
+```python
+while not nav.isTaskComplete():
+    time.sleep(0.2)
+```
+
+如果 Nav2 卡住、动作服务器异常或恢复行为无限持续，MCP技能会一直阻塞。
+
+应增加：
+
+```text
+单点超时，例如180秒
+失败重试，例如1次
+取消任务
+清理代价地图
+记录失败点
+```
+
+---
+
+## 第十二处问题：仓库中没有完整柜台Gazebo场景
+
+我检查了压缩包，没有看到对应的：
+
+```text
+cabinet_inspection.world
+柜台SDF模型
+柜台静态地图PGM/YAML
+Gazebo启动脚本
+```
+
+现在有的是目标坐标和Nav2参数，但没有物理柜台环境。
+
+因此即使机器人导航成功，也没有真正验证：
+
+```text
+柜台碰撞
+激光检测
+地图障碍
+柜面距离
+机器人是否穿柜
+```
+
+必须补充：
+
+```text
+Gazebo visual
+Gazebo collision
+Nav2静态地图
+统一坐标源
+```
+
+---
+
+# 对这份工程的客观评价
+
+可以分成三部分。
+
+| 模块           | 当前状态           |
+| ------------ | -------------- |
+| vLLM连接       | 基本正确，已使用4568   |
+| Master场景文件读取 | 已配置，但提示词语法错误   |
+| 单点Nav2导航     | 已基本实现          |
+| 柜台目标查表       | 已实现            |
+| 多柜台名称顺序规划    | 提示词有设计，但目前无法启动 |
+| 模型自主计算坐标     | 未实现            |
+| 完整计划结构化透传    | 未实现            |
+| 严格计划校验       | 未实现            |
+| 柜台Gazebo物理场景 | 未发现            |
+| 安全距离建模       | 未实现            |
+| 完整RoboOS仿真闭环 | 尚未形成           |
+
+整体判断：
+
+> 这份代码适合作为“预定义语义目标导航”的基础版本，但不能直接用于你现在要做的完整RoboBrain几何路径规划实验。
+
+大约完成了目标链路的底层40%—50%，最有价值的是你的 `BasicNavigator` 单点导航代码，其他部分需要围绕完整计划重新组织。
+
+# 正确的改造方向
+
+不需要推倒重来。建议保留：
+
+```text
+master/run.py
+Redis通信
+Slaver注册与监听
+FastMCP服务器
+BasicNavigator单点执行逻辑
+机器人状态结构
+```
+
+重点修改六处：
+
+```text
+1. 修复 master/agents/prompts.py
+2. 重写 master/scene/cabinet_profile.yaml，只保留原始几何
+3. 将 planner max_tokens 改为3200
+4. Master增加tool_name/tool_arguments结构化派发
+5. Slaver增加直接工具调用分支
+6. MCP增加完整计划校验和逐点执行工具
+```
+
+同时统一删除实验中的三套冲突坐标，只保留：
+
+```text
+原始几何文件
+模型输出文件
+校验参考逻辑
+```
+
+不要再使用 `nav_targets.yaml` 给完整柜台实验提供答案。它可以保留给普通语义导航任务，但柜台完整规划必须使用模型输出的 `waypoints`。
+

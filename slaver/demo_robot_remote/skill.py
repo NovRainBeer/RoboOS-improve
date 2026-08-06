@@ -1,14 +1,24 @@
 from mcp.server.fastmcp import FastMCP
 import subprocess
 import math
+import asyncio
+import json
 import yaml
 import time
 from pathlib import Path
+from typing import Any, Dict, List
 
 import rclpy
 from rclpy.parameter import Parameter
 from geometry_msgs.msg import PoseStamped, Quaternion
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
+from model_plan_validator import (
+    validate_model_plan,
+    _expected_inspection_pose,
+    _cabinet_geometry,
+    _load_scene,
+    _polyline_distance,
+)
 
 mcp = FastMCP(
     name="robots",
@@ -86,11 +96,14 @@ def _get_navigator() -> BasicNavigator:
     if _NAVIGATOR is None:
         if not rclpy.ok():
             rclpy.init()
+        print("[NAV INIT] Creating BasicNavigator ...", flush=True)
         _NAVIGATOR = BasicNavigator()
         _NAVIGATOR.set_parameters(
             [Parameter("use_sim_time", value=True)]
         )
+        print("[NAV INIT] waiting for Nav2 ...", flush=True)
         _NAVIGATOR.waitUntilNav2Active()
+        print("[NAV INIT] Nav2 active", flush=True)
     return _NAVIGATOR
 
 def _run_bash(
@@ -293,9 +306,16 @@ ros2 topic pub --times {times} -r 10 {TOPIC_NAME} geometry_msgs/msg/Twist \
 
 
 @mcp.tool()
-async def navigate_to_target(target: str) -> tuple[str, dict]:
+async def navigate_to_target(
+    target: str,
+    goal_timeout_seconds: float = 180.0,
+) -> tuple[str, dict]:
     """
     Navigate the robot to a named target.
+
+    Args:
+        target: Name of the navigation target (e.g. "spawn", "kitchenTable").
+        goal_timeout_seconds: Maximum time to wait for Nav2 to reach the goal.
     """
     if not isinstance(target, str) or not target.strip():
         raise ValueError("target must be a non-empty string")
@@ -311,6 +331,11 @@ async def navigate_to_target(target: str) -> tuple[str, dict]:
     goal_y = float(goal_cfg["y"])
     goal_yaw = float(goal_cfg["yaw"])
 
+    print(
+        f"[NAV TARGET] target={resolved}, x={goal_x}, y={goal_y}, yaw={goal_yaw}",
+        flush=True,
+    )
+
     nav = _get_navigator()
 
     goal_pose = PoseStamped()
@@ -324,16 +349,37 @@ async def navigate_to_target(target: str) -> tuple[str, dict]:
     ROBOT_STATUS["status"] = "navigating"
     ROBOT_STATUS["navigation_goal"] = resolved
 
+    timeout = max(5.0, float(goal_timeout_seconds))
+
     try:
-        print(f"[NAV2] Sending goal to {resolved}: x={goal_x}, y={goal_y}, yaw={goal_yaw}")
+        print("[NAV GOAL] calling goToPose", flush=True)
         nav.goToPose(goal_pose)
+        print("[NAV GOAL] goal sent", flush=True)
+
+        start_time = time.monotonic()
 
         while not nav.isTaskComplete():
-            _sync_state_from_odom()
-            time.sleep(0.2)
+            elapsed = time.monotonic() - start_time
+            if elapsed > timeout:
+                print(f"[NAV TIMEOUT] {elapsed:.1f}s > {timeout:.0f}s, cancelling", flush=True)
+                nav.cancelTask()
+                ROBOT_STATUS["status"] = "timeout"
+                ROBOT_STATUS["navigation_goal"] = None
+                raise RuntimeError(
+                    f"Navigation to {resolved} timed out after {elapsed:.1f}s"
+                )
+
+            feedback = nav.getFeedback()
+            if feedback is not None:
+                print(
+                    f"[NAV FEEDBACK] distance_remaining={feedback.distance_remaining:.3f}",
+                    flush=True,
+                )
+
+            await asyncio.sleep(0.1)
 
         result = nav.getResult()
-        _sync_state_from_odom()
+        print(f"[NAV RESULT] result={result}", flush=True)
 
         if result == TaskResult.SUCCEEDED:
             ROBOT_STATUS["status"] = "idle"
@@ -344,7 +390,7 @@ async def navigate_to_target(target: str) -> tuple[str, dict]:
                 f"Current pose={ROBOT_STATUS['position']}, "
                 f"orientation={ROBOT_STATUS['orientation']}"
             )
-            print(msg)
+            print(msg, flush=True)
             return _state_reply(msg)
 
         if result == TaskResult.CANCELED:
@@ -357,10 +403,430 @@ async def navigate_to_target(target: str) -> tuple[str, dict]:
         raise RuntimeError(f"Navigation to {resolved} failed with result={result}")
 
     except Exception as e:
-        if ROBOT_STATUS["status"] not in ("canceled", "error"):
+        if ROBOT_STATUS["status"] not in ("canceled", "error", "timeout"):
             ROBOT_STATUS["status"] = "error"
         ROBOT_STATUS["navigation_goal"] = None
         raise RuntimeError(f"Failed to navigate to {resolved}: {e}") from e
     
+
+SCENE_FILE = (
+    Path(__file__).resolve().parents[2]
+    / "master"
+    / "scene"
+    / "cabinet_profile.yaml"
+)
+
+
+def _build_inspection_plan(
+    cabinet_order: List[str],
+    start_target: str = "spawn",
+) -> Dict[str, Any]:
+    """Build a complete cabinet inspection plan from cabinet names only.
+
+    All inspection poses are computed server-side from raw cabinet geometry.
+    Transit waypoints are inserted automatically for row transitions and
+    the return path to avoid cabinet collisions.
+    """
+    scene = _load_scene(SCENE_FILE)
+    cabinets = _cabinet_geometry(scene)
+    constraints = scene.get("inspection_constraints") or {}
+    inspection_distance = float(constraints.get("cabinet_front_to_base_link", 0.60))
+    origin = scene.get("origin") or {}
+    bounds = scene.get("field_bounds") or {}
+
+    waypoints: List[Dict[str, Any]] = []
+    visit_order: List[str] = []
+
+    # --- start waypoint ---
+    waypoints.append({
+        "name": start_target,
+        "x": float(origin.get("x", 0.0)),
+        "y": float(origin.get("y", 0.0)),
+        "yaw": float(origin.get("yaw", 0.0)),
+    })
+    visit_order.append(start_target)
+
+    # --- approach transit: go to first cabinet's y at origin x to avoid
+    #     crossing cabinet inflated areas on the approach ---
+    first_cab = cabinets[cabinet_order[0]]
+    first_pose = _expected_inspection_pose(first_cab, inspection_distance)
+    t_approach = "T_approach"
+    waypoints.append({
+        "name": t_approach,
+        "x": float(origin.get("x", 0.0)),
+        "y": first_pose["y"],
+        "yaw": 0.0,
+    })
+    visit_order.append(t_approach)
+
+    for i, cab_name in enumerate(cabinet_order):
+        if cab_name not in cabinets:
+            known = sorted(cabinets.keys())
+            raise KeyError(
+                f"Unknown cabinet '{cab_name}'. Known cabinets: {known}"
+            )
+        cab = cabinets[cab_name]
+        pose = _expected_inspection_pose(cab, inspection_distance)
+
+        # --- row-transition transit waypoints ---
+        if i > 0:
+            prev_cab = cabinets[cabinet_order[i - 1]]
+            prev_ny = float(prev_cab["front_normal"]["y"])
+            curr_ny = float(cab["front_normal"]["y"])
+
+            if prev_ny * curr_ny < 0:
+                # Go past the end of the cabinet row, then cross over.
+                transit_x = max(
+                    float(prev_cab["center"]["x"]),
+                    float(cab["center"]["x"]),
+                ) + 2.0
+                if bounds:
+                    transit_x = min(transit_x, float(bounds.get("xmax", 12.0)) - 0.5)
+
+                prev_y = float(waypoints[-1]["y"])
+                t1 = f"T_transit_{i}a"
+                waypoints.append({
+                    "name": t1, "x": transit_x, "y": prev_y, "yaw": 0.0,
+                })
+                visit_order.append(t1)
+
+                t2 = f"T_transit_{i}b"
+                waypoints.append({
+                    "name": t2, "x": transit_x, "y": pose["y"], "yaw": 0.0,
+                })
+                visit_order.append(t2)
+
+        waypoints.append({
+            "name": cab_name,
+            "x": pose["x"],
+            "y": pose["y"],
+            "yaw": pose["yaw"],
+        })
+        visit_order.append(cab_name)
+
+    # --- return-to-spawn transit ---
+    last_y = float(waypoints[-1]["y"])
+    t_ret = "T_return"
+    waypoints.append({
+        "name": t_ret,
+        "x": float(origin.get("x", 0.0)),
+        "y": last_y,
+        "yaw": 0.0,
+    })
+    visit_order.append(t_ret)
+
+    # --- end at spawn ---
+    waypoints.append({
+        "name": start_target,
+        "x": float(origin.get("x", 0.0)),
+        "y": float(origin.get("y", 0.0)),
+        "yaw": float(origin.get("yaw", 0.0)),
+    })
+    visit_order.append(start_target)
+
+    total_dist = _polyline_distance(waypoints)
+
+    return {
+        "visit_order": visit_order,
+        "waypoints": waypoints,
+        "total_distance_m": round(total_dist, 4),
+    }
+
+
+async def _navigate_model_waypoint(
+    waypoint: Dict[str, Any],
+    *,
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    """Execute one model-generated map-frame pose without replacing it."""
+    name = str(waypoint["name"])
+    goal_x = float(waypoint["x"])
+    goal_y = float(waypoint["y"])
+    goal_yaw = float(waypoint["yaw"])
+
+    nav = _get_navigator()
+    goal_pose = PoseStamped()
+    goal_pose.header.frame_id = "map"
+    goal_pose.header.stamp = nav.get_clock().now().to_msg()
+    goal_pose.pose.position.x = goal_x
+    goal_pose.pose.position.y = goal_y
+    goal_pose.pose.position.z = 0.0
+    goal_pose.pose.orientation = _yaw_to_quaternion(goal_yaw)
+
+    ROBOT_STATUS["status"] = "navigating"
+    ROBOT_STATUS["navigation_goal"] = name
+    started = time.monotonic()
+
+    print(
+        f"[MODEL PLAN] goal={name}, x={goal_x:.3f}, "
+        f"y={goal_y:.3f}, yaw={goal_yaw:.3f}",
+        flush=True,
+    )
+    print("[NAV GOAL] calling goToPose", flush=True)
+    nav.goToPose(goal_pose)
+    print("[NAV GOAL] goal sent", flush=True)
+
+    while not nav.isTaskComplete():
+        elapsed = time.monotonic() - started
+        if elapsed > timeout_seconds:
+            print(f"[NAV TIMEOUT] cancelling at {elapsed:.1f}s", flush=True)
+            nav.cancelTask()
+            ROBOT_STATUS["status"] = "timeout"
+            ROBOT_STATUS["navigation_goal"] = None
+            return {
+                "name": name,
+                "status": "timeout",
+                "elapsed_seconds": round(elapsed, 3),
+            }
+
+        feedback = nav.getFeedback()
+        if feedback is not None:
+            print(
+                f"[NAV FEEDBACK] distance_remaining={feedback.distance_remaining:.3f}",
+                flush=True,
+            )
+
+        await asyncio.sleep(0.1)
+
+    result = nav.getResult()
+    elapsed = round(time.monotonic() - started, 3)
+    ROBOT_STATUS["navigation_goal"] = None
+
+    if result == TaskResult.SUCCEEDED:
+        ROBOT_STATUS["status"] = "idle"
+        ROBOT_STATUS["semantic_position"] = name
+        return {
+            "name": name,
+            "status": "succeeded",
+            "elapsed_seconds": elapsed,
+            "executed_pose": {
+                "x": goal_x,
+                "y": goal_y,
+                "yaw": goal_yaw,
+                "frame_id": "map",
+            },
+        }
+
+    if result == TaskResult.CANCELED:
+        ROBOT_STATUS["status"] = "canceled"
+        status = "canceled"
+    else:
+        ROBOT_STATUS["status"] = "error"
+        status = "failed"
+
+    return {
+        "name": name,
+        "status": status,
+        "elapsed_seconds": elapsed,
+        "nav2_result": str(result),
+    }
+
+
+@mcp.tool()
+async def validate_cabinet_plan(
+    plan: dict,
+    strict: bool = True,
+) -> tuple[str, dict]:
+    """
+    Validate a complete RoboBrain cabinet plan against raw scene geometry.
+    This tool never replaces model-generated x, y, yaw, order, or distance.
+    """
+    report = validate_model_plan(
+        plan,
+        SCENE_FILE,
+        strict=bool(strict),
+    )
+    status = "accepted" if report["valid"] else "rejected"
+    message = f"Cabinet plan {status}; coordinates_replaced=false"
+    print(message)
+    if report["errors"]:
+        print(json.dumps(report["errors"], ensure_ascii=False, indent=2))
+    return message, {
+        "status": status,
+        "validation": report,
+    }
+
+
+@mcp.tool()
+async def execute_cabinet_inspection(
+    plan: dict,
+    strict: bool = True,
+    dwell_seconds: float = 2.0,
+    goal_timeout_seconds: float = 180.0,
+) -> tuple[str, dict]:
+    """
+    Validate and execute a complete model-generated cabinet inspection plan.
+
+    Args:
+        plan: Object containing visit_order, waypoints, and total_distance_m.
+              Every waypoint must contain name, x, y, and yaw in the map frame.
+        strict: Reject missing or incorrect reported distance when true.
+        dwell_seconds: Pause after each cabinet inspection waypoint.
+        goal_timeout_seconds: Maximum Nav2 time for each waypoint.
+    """
+    report = validate_model_plan(
+        plan,
+        SCENE_FILE,
+        strict=bool(strict),
+    )
+
+    if not report["valid"]:
+        ROBOT_STATUS["status"] = "plan_rejected"
+        message = "Model plan rejected before Nav2 execution."
+        print(message)
+        print(json.dumps(report["errors"], ensure_ascii=False, indent=2))
+        return message, {
+            "status": "rejected",
+            "coordinates_replaced": False,
+            "validation": report,
+            "execution_results": [],
+        }
+
+    dwell_seconds = max(0.0, min(float(dwell_seconds), 30.0))
+    goal_timeout_seconds = max(5.0, min(float(goal_timeout_seconds), 900.0))
+    waypoints: List[Dict[str, Any]] = plan["waypoints"]
+
+    # The first origin waypoint declares the required start state. It is not
+    # sent as a redundant Nav2 goal. All remaining model poses are executed.
+    execution_results: List[Dict[str, Any]] = [
+        {
+            "name": str(waypoints[0]["name"]),
+            "status": "start_pose_declared",
+            "executed_pose": {
+                "x": float(waypoints[0]["x"]),
+                "y": float(waypoints[0]["y"]),
+                "yaw": float(waypoints[0]["yaw"]),
+                "frame_id": "map",
+            },
+        }
+    ]
+
+    cabinet_names = set(report["expected_inspection_poses"].keys())
+    for waypoint in waypoints[1:]:
+        result = await _navigate_model_waypoint(
+            waypoint,
+            timeout_seconds=goal_timeout_seconds,
+        )
+        execution_results.append(result)
+
+        if result["status"] != "succeeded":
+            message = f"Cabinet inspection stopped at {waypoint['name']}."
+            return message, {
+                "status": "failed",
+                "failed_waypoint": waypoint["name"],
+                "coordinates_replaced": False,
+                "validation": report,
+                "execution_results": execution_results,
+            }
+
+        if str(waypoint["name"]) in cabinet_names and dwell_seconds > 0:
+            print(f"[INSPECTION] dwell at {waypoint['name']} for {dwell_seconds:.1f}s")
+            time.sleep(dwell_seconds)
+
+    ROBOT_STATUS["status"] = "idle"
+    message = "Complete model-generated cabinet inspection plan succeeded."
+    return message, {
+        "status": "success",
+        "coordinates_replaced": False,
+        "validation": report,
+        "execution_results": execution_results,
+    }
+
+
+@mcp.tool()
+async def run_cabinet_inspection(
+    cabinet_order: list[str],
+    start_target: str = "spawn",
+    dwell_seconds: float = 2.0,
+    goal_timeout_seconds: float = 180.0,
+) -> tuple[str, dict]:
+    """
+    Execute a cabinet inspection by cabinet names. All inspection poses are
+    computed server-side from raw cabinet geometry — the caller only needs to
+    provide the cabinet visit order. No manual coordinate calculation required.
+
+    Args:
+        cabinet_order: List of cabinet names in visit order,
+                       e.g. ["A1","A2","A3","A4","A5","A6","B6","B5","B4","B3","B2","B1"]
+        start_target: Name of the start/end origin target (default: "spawn").
+        dwell_seconds: Pause after each cabinet inspection waypoint.
+        goal_timeout_seconds: Maximum Nav2 time for each waypoint.
+    """
+    # 1) Build the inspection plan server-side
+    plan = _build_inspection_plan(
+        cabinet_order=list(cabinet_order),
+        start_target=str(start_target),
+    )
+
+    print(
+        "[SERVER-SIDE PLAN] built plan with "
+        f"{len(plan['waypoints'])} waypoints, "
+        f"distance={plan['total_distance_m']:.3f}m"
+    )
+
+    # 2) Validate the server-built plan
+    report = validate_model_plan(plan, SCENE_FILE, strict=True)
+    if not report["valid"]:
+        ROBOT_STATUS["status"] = "plan_rejected"
+        message = "Server-built plan rejected before Nav2 execution."
+        print(message)
+        print(json.dumps(report["errors"], ensure_ascii=False, indent=2))
+        return message, {
+            "status": "rejected",
+            "plan": plan,
+            "validation": report,
+            "execution_results": [],
+        }
+
+    # 3) Execute
+    dwell_seconds = max(0.0, min(float(dwell_seconds), 30.0))
+    goal_timeout_seconds = max(5.0, min(float(goal_timeout_seconds), 900.0))
+    waypoints: List[Dict[str, Any]] = plan["waypoints"]
+
+    execution_results: List[Dict[str, Any]] = [
+        {
+            "name": str(waypoints[0]["name"]),
+            "status": "start_pose_declared",
+            "executed_pose": {
+                "x": float(waypoints[0]["x"]),
+                "y": float(waypoints[0]["y"]),
+                "yaw": float(waypoints[0]["yaw"]),
+                "frame_id": "map",
+            },
+        }
+    ]
+
+    cabinet_names = set(report["expected_inspection_poses"].keys())
+    for waypoint in waypoints[1:]:
+        result = await _navigate_model_waypoint(
+            waypoint,
+            timeout_seconds=goal_timeout_seconds,
+        )
+        execution_results.append(result)
+
+        if result["status"] != "succeeded":
+            message = f"Cabinet inspection stopped at {waypoint['name']}."
+            return message, {
+                "status": "failed",
+                "failed_waypoint": waypoint["name"],
+                "plan": plan,
+                "validation": report,
+                "execution_results": execution_results,
+            }
+
+        if str(waypoint["name"]) in cabinet_names and dwell_seconds > 0:
+            print(f"[INSPECTION] dwell at {waypoint['name']} for {dwell_seconds:.1f}s")
+            time.sleep(dwell_seconds)
+
+    ROBOT_STATUS["status"] = "idle"
+    message = "Complete cabinet inspection plan succeeded (server-side computed)."
+    return message, {
+        "status": "success",
+        "plan": plan,
+        "validation": report,
+        "execution_results": execution_results,
+    }
+
+
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")

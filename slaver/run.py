@@ -102,6 +102,8 @@ class RobotManager:
             "task_id": data.get("task_id"),
             "refresh": data.get("refresh"),
             "order_flag": data.get("order_flag", "false"),
+            "tool_name": data.get("tool_name"),
+            "tool_arguments": data.get("tool_arguments"),
         }
         with self.lock:
             future = asyncio.run_coroutine_threadsafe(
@@ -109,12 +111,105 @@ class RobotManager:
             )
             future.result()
 
+    def _available_tool_names(self) -> set:
+        return {
+            tool.get("function", {}).get("name")
+            for tool in (self.tools or [])
+            if tool.get("function", {}).get("name")
+        }
+
+    @staticmethod
+    def _serialize_mcp_result(response):
+        structured = getattr(response, "structuredContent", None)
+        if structured is None:
+            structured = getattr(response, "structured_content", None)
+
+        content = []
+        for item in getattr(response, "content", []) or []:
+            if hasattr(item, "text"):
+                text = item.text
+                try:
+                    content.append(json.loads(text))
+                except Exception:
+                    content.append(text)
+            elif hasattr(item, "model_dump"):
+                content.append(item.model_dump())
+            else:
+                content.append(str(item))
+
+        return {
+            "is_error": bool(getattr(response, "isError", False)),
+            "structured_content": structured,
+            "content": content,
+        }
+
+    async def _execute_direct_tool(self, task_data: Dict) -> None:
+        tool_name = task_data.get("tool_name")
+        tool_arguments = task_data.get("tool_arguments")
+        task = task_data.get("task") or f"Direct tool call: {tool_name}"
+
+        if tool_name not in self._available_tool_names():
+            raise ValueError(
+                f"Master requested unknown MCP tool '{tool_name}'. "
+                f"Available tools: {sorted(self._available_tool_names())}"
+            )
+        if not isinstance(tool_arguments, dict):
+            raise TypeError("tool_arguments must be a JSON object")
+
+        print(
+            "[DIRECT TOOL] calling ",
+            tool_name,
+            " with structured arguments; Slaver LLM is bypassed",
+            sep="",
+        )
+        response = await self.session.call_tool(tool_name, tool_arguments)
+        result = self._serialize_mcp_result(response)
+
+        self._send_result(
+            robot_name=self.robot_name,
+            task=task,
+            task_id=task_data.get("task_id"),
+            result=result,
+            tool_call=[
+                {
+                    "tool_name": tool_name,
+                    "tool_arguments": tool_arguments,
+                    "direct": True,
+                }
+            ],
+        )
+
     async def _execute_task(self, task_data: Dict) -> None:
         """Internal task execution logic"""
         if self._shutdown_event.is_set():
             return
 
         os.makedirs("./.log", exist_ok=True)
+
+        # A structured tool call produced by Master is executed verbatim.
+        # Normal tasks continue through the original Slaver LLM path.
+        if task_data.get("tool_name") is not None:
+            try:
+                await self._execute_direct_tool(task_data)
+            except Exception as exc:
+                self._send_result(
+                    robot_name=self.robot_name,
+                    task=task_data.get("task") or str(task_data.get("tool_name")),
+                    task_id=task_data.get("task_id"),
+                    result={
+                        "status": "error",
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                    tool_call=[
+                        {
+                            "tool_name": task_data.get("tool_name"),
+                            "tool_arguments": task_data.get("tool_arguments"),
+                            "direct": True,
+                        }
+                    ],
+                )
+            return
         
         # Use tool matcher to find relevant tools for the task
         task = task_data["task"]
@@ -219,6 +314,15 @@ class RobotManager:
             }
             for tool in response.tools
         ]
+
+        # Hide server-side convenience tools from Master planning so the
+        # Master LLM is forced to compute its own geometry.
+        _HIDDEN_FROM_MASTER = {"run_cabinet_inspection"}
+        _master_visible_tools = [
+            t for t in self.tools
+            if t.get("function", {}).get("name") not in _HIDDEN_FROM_MASTER
+        ]
+
         print("Connected to robot with tools:", str(self.tools))
         
         # Train the tool matcher with the available tools
@@ -229,7 +333,7 @@ class RobotManager:
         self.robot_name = robot_name
         register = {
             "robot_name": robot_name,
-            "robot_tool": self.tools,
+            "robot_tool": _master_visible_tools,
             "robot_state": "idle",
             "timestamp": int(datetime.now().timestamp()),
         }
