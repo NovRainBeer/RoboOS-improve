@@ -1,3 +1,29 @@
+# RoboOS 巡检导航扩展
+
+本仓库基于 [FlagOpen/RoboOS](https://github.com/FlagOpen/RoboOS)。RoboOS 的分层架构、基础调度框架、模型与技术报告归上游项目；下方保留上游介绍及部署参考。
+
+## 代码阅读入口
+
+巡检导航相关实现位于 [`inspection-robot-skill` 分支](https://github.com/NovRainBeer/RoboOS-improve/tree/inspection-robot-skill)。默认 `main` 保留较早版本，阅读下列实现时请打开指定分支或固定提交。
+
+| 入口 | 可阅读的实现 |
+| --- | --- |
+| [`validate_plan`](https://github.com/NovRainBeer/RoboOS-improve/blob/0a55c8793ed5fc96929e23eeee0c10a19c478b92/master/agents/sop_layer.py#L202-L264) | 校验机器人与技能名称，规范化导航目标，过滤无法解析的子任务。 |
+| [`navigate_to_target`](https://github.com/NovRainBeer/RoboOS-improve/blob/0a55c8793ed5fc96929e23eeee0c10a19c478b92/slaver/demo_robot_remote/old_skill.py#L296-L365) | 将命名目标转换为地图坐标，调用 Nav2，同步里程计状态，处理成功、取消与失败结果。 |
+
+## 获取巡检分支
+
+```bash
+git clone -b inspection-robot-skill https://github.com/NovRainBeer/RoboOS-improve.git
+cd RoboOS-improve
+```
+
+依赖和部署方式参考下方文档，并按所用机器人环境调整。
+
+---
+
+## 上游项目介绍与部署参考
+
 <div align="center">
 <img src="./assets/logo2.png" width="200"/>
 </div>
@@ -91,8 +117,8 @@ Recommended for local development, debugging, or feature extension.
 
 ##### 2.2.1 Clone the Repository
 ```bash
-git clone -b stand-alone https://github.com/FlagOpen/RoboOS.git
-cd RoboOS
+git clone -b inspection-robot-skill https://github.com/NovRainBeer/RoboOS-improve.git
+cd RoboOS-improve
 ```
 
 ##### 2.2.2 Install Dependencies
